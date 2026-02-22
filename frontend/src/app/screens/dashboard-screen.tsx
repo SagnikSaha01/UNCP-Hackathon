@@ -38,7 +38,6 @@ const MOCK_DASHBOARD = {
     "saccade_velocity:204.6:148:Saccadic peak velocity decreased significantly, indicating potential spatial attention and motor control issues.",
     "fixation_stability:0.832:0.58:Reduced fixation stability suggests compromised attention control.",
     "pupil_variability:0.038:0.13:Increased pupil variability may reflect stress or altered autonomic function.",
-    "antisaccade_latency:304.6:430:Increased antisaccade latency is indicative of impaired executive function.",
     "smooth_pursuit_gain:0.86:0.6:Decreased smooth pursuit gain suggests potential deterioration in attention.",
     "saccade_accuracy:0.908:0.71:Reduced accuracy could denote cognitive decline.",
     "prosaccade_latency:197.8:290:Longer prosaccade latency points to potential neurological deficits.",

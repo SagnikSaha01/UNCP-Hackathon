@@ -5,7 +5,6 @@
     "saccade_velocity": 220,
     "fixation_stability": 0.90,
     "pupil_variability": 0.02,
-    "antisaccade_latency": 280,
     "smooth_pursuit_gain": 0.92,
     "saccade_accuracy": 0.95,
     "prosaccade_latency": 180
@@ -16,7 +15,6 @@
       "saccade_velocity": 210,
       "fixation_stability": 0.85,
       "pupil_variability": 0.03,
-      "antisaccade_latency": 295,
       "smooth_pursuit_gain": 0.88,
       "saccade_accuracy": 0.92,
       "prosaccade_latency": 190
@@ -26,7 +24,6 @@
       "saccade_velocity": 195,
       "fixation_stability": 0.78,
       "pupil_variability": 0.05,
-      "antisaccade_latency": 320,
       "smooth_pursuit_gain": 0.82,
       "saccade_accuracy": 0.88,
       "prosaccade_latency": 210
@@ -36,7 +33,6 @@
       "saccade_velocity": 180,
       "fixation_stability": 0.72,
       "pupil_variability": 0.07,
-      "antisaccade_latency": 350,
       "smooth_pursuit_gain": 0.75,
       "saccade_accuracy": 0.83,
       "prosaccade_latency": 230

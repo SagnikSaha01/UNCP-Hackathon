@@ -21,7 +21,6 @@ Metric fields (per reading)
   saccade_velocity       — deg/s, speed of rapid eye movement
   fixation_stability     — 0–1, how still the eye holds a fixation point
   pupil_variability      — 0–1, variance in pupil diameter (lower = more stable)
-  antisaccade_latency    — ms, time to suppress a reflexive saccade (frontal lobe)
   smooth_pursuit_gain    — 0–1, gaze velocity / target velocity ratio
   saccade_accuracy       — 0–1, how close the saccade lands to the target
   prosaccade_latency     — ms, time to make a reflexive saccade to a target
@@ -53,13 +52,12 @@ load_dotenv()
 # Change this value to adjust how many readings are kept per session.
 TIME_SERIES_MAX_READINGS = 5
 
-# The 7 metric keys that every reading must contain.
+# The metric keys that every reading must contain.
 # Used for validation, delta computation, and baseline extraction.
 METRIC_KEYS = [
     "saccade_velocity",
     "fixation_stability",
     "pupil_variability",
-    "antisaccade_latency",
     "smooth_pursuit_gain",
     "saccade_accuracy",
     "prosaccade_latency",
@@ -523,7 +521,7 @@ def _average_metrics(
     readings: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
-    Average the 7 METRIC_KEYS across all readings in a time_series.
+    Average METRIC_KEYS across all readings in a time_series.
     Non-numeric or missing values are skipped gracefully.
     Returns a flat dict with one averaged value per metric key.
     """
@@ -556,7 +554,6 @@ def _compute_deltas_vs_baseline(
       saccade_velocity      — negative delta = worsening (slower)
       fixation_stability    — negative delta = worsening (less stable)
       pupil_variability     — positive delta = worsening (more variable)
-      antisaccade_latency   — positive delta = worsening (slower suppression)
       smooth_pursuit_gain   — negative delta = worsening (worse tracking)
       saccade_accuracy      — negative delta = worsening (less accurate)
       prosaccade_latency    — positive delta = worsening (slower reflex)
@@ -594,7 +591,6 @@ def build_longitudinal_summary(sessions: list[dict[str, Any]]) -> dict[str, Any]
             "saccade_velocity":    [float | None, ...],
             "fixation_stability":  [float | None, ...],
             "pupil_variability":   [float | None, ...],
-            "antisaccade_latency": [float | None, ...],
             "smooth_pursuit_gain": [float | None, ...],
             "saccade_accuracy":    [float | None, ...],
             "prosaccade_latency":  [float | None, ...],

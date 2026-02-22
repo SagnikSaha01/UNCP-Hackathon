@@ -1172,7 +1172,7 @@ Each entry MUST be exactly:
 <metric_name>:<baseline>:<latest>:<evidence (max 1 sentence)>
 
 Example:
-["antisaccade_latency:280:350:Latency increased vs baseline and aligns with documented deterioration pattern."]
+["saccade_velocity:220:180:Velocity dropped versus baseline and indicates reduced ocular motor performance."]
 
 Rules:
 - Keep to 3-6 list entries total when possible
