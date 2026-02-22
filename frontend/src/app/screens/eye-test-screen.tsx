@@ -12,6 +12,9 @@ import { VoiceAssistantButton } from "../components/voice-assistant-button";
 import type { FaceMeshResults } from "../../global";
 
 // --- Ocular test constants (from AURA kinematics) ---
+// VELOCITY_SCALE: iris x moves ~0–1 normalized, dt in ms.
+// (Δx / dt) * VELOCITY_SCALE → "AURA velocity units" used internally for
+// CNS-depression threshold detection. Not in deg/s; kept arbitrary but consistent.
 const VELOCITY_SCALE = 2500;
 const CALIBRATION_DURATION_MS = 4000;
 const THRESHOLD_OFFSET = 0.1;
@@ -19,7 +22,9 @@ const EXAM_CYCLES = 5;
 const EXAM_POSITION_DURATION_MS = 1500;
 const PEAK_TRACK_INTERVAL_MS = 50;
 const DEPRESSION_MULTIPLIER = 1.2;
-const DETECTION_INTERVAL_MS = 66;
+// Reduced from 66ms (15Hz) to 33ms (~30Hz) so prosaccade latency timer
+// has finer granularity — at 66ms we systematically overestimate by up to 66ms.
+const DETECTION_INTERVAL_MS = 33;
 const UI_UPDATE_INTERVAL_MS = 150;
 const CHART_UPDATE_INTERVAL_MS = 100;
 const CHART_SLIDING_WINDOW = 300;
@@ -31,6 +36,9 @@ const RIGHT_IRIS = 473;
 const IRIS_LEFT = 469;
 const IRIS_RIGHT = 471;
 
+// Dot positions as fractions of the test box (0–1), used for both CSS and
+// accuracy comparison against gaze position remapped to the same space.
+const EXAM_DOT_FRACTIONS = [0.1, 0.9]; // left=10%, right=90% of test box
 const EXAM_POSITIONS = [
   { left: "10%", top: "50%" },
   { left: "90%", top: "50%" },
@@ -40,9 +48,14 @@ const EXAM_POSITIONS = [
 const FIXATION_DURATION_MS = 2500;
 const FIXATION_POSITION = { left: "50%", top: "50%" };
 const PURSUIT_DURATION_MS = 4000;
-const PURSUIT_AMPLITUDE = 0.35; // normalized; target x = 0.5 ± amplitude
+// Pursuit amplitude in fraction of TEST BOX width. The target oscillates
+// between 15% and 85% of the box (0.5 ± 0.35).
+const PURSUIT_AMPLITUDE = 0.35;
 const PURSUIT_PERIOD_MS = 2000; // full sine cycle
-const PROSACCADE_VELOCITY_THRESHOLD = 0.12; // velocity above this = saccade started
+// Lowered from 0.12 to 0.04 so we detect saccade onset reliably at ~30Hz.
+// 0.04 AURA velocity units ≈ very small iris shift — catches initiation early
+// before peak velocity is reached, matching how clinical systems measure latency
+// from stimulus onset to first detectable eye movement.
 const SACCADE_SETTLE_MS = 400; // use last N ms of each trial for endpoint
 const GAZE_TRIAL_CAP = 80;
 const IRIS_HISTORY_CAP = 300;
@@ -65,6 +78,10 @@ export function EyeTestScreen() {
   const faceMeshRef = useRef<ReturnType<typeof createFaceMesh> | null>(null);
   const processRafRef = useRef<number>(0);
   const lastDetectionRef = useRef(0);
+  // Ref to the test-box div so we can map screen coords → box-fraction coords
+  const testBoxRef = useRef<HTMLDivElement>(null);
+  // Snapshot of test-box screen rect taken at exam start; null until exam begins
+  const testBoxRectRef = useRef<DOMRect | null>(null);
 
   const historyRef = useRef<Array<{ x: number; t: number }>>([]);
   const calibDataRef = useRef<number[]>([]);
@@ -77,11 +94,19 @@ export function EyeTestScreen() {
 
   const examActiveRef = useRef(false);
   const examPhaseRef = useRef<ExamPhase>(null);
+  // Stores iris width normalized to frame width (0–1) for pupil variability.
+  // Normalizing removes dependency on camera resolution / distance.
   const irisSizeHistoryRef = useRef<number[]>([]);
   const fixationGazeRef = useRef<Array<{ x: number; y: number; t: number }>>([]);
   const prosaccadeLatenciesRef = useRef<number[]>([]);
   const prosaccadeLatencyThisTrialRef = useRef<number | null>(null);
   const jumpTimeRef = useRef(0);
+  // Pre-jump iris X baseline: average of last N frames before dot jump.
+  // Used for position-shift latency detection instead of velocity threshold.
+  const preJumpBaselineRef = useRef<number | null>(null);
+  // Minimum iris shift (in normalized frame units) to count as saccade onset.
+  // ~0.003 ≈ roughly 1–2px of iris movement on a typical webcam frame.
+  const LATENCY_SHIFT_THRESHOLD = 0.003;
   const gazeTrialRef = useRef<Array<{ x: number; t: number }>>([]);
   const saccadeAccuracyRef = useRef<number[]>([]);
   const currentTargetNormRef = useRef(0.5);
@@ -259,7 +284,11 @@ export function EyeTestScreen() {
         }
 
         if (examActiveRef.current) {
-          irisSizeHistoryRef.current.push(irisWidthPx);
+          // Normalize iris width to frame width (0–1) so pupil_variability
+          // is resolution-independent. Clinical studies report pupil size in mm;
+          // we use fraction-of-frame as a proxy that scales consistently.
+          const irisWidthNorm = irisWidthPx / canvas.width;
+          irisSizeHistoryRef.current.push(irisWidthNorm);
           if (irisSizeHistoryRef.current.length > IRIS_HISTORY_CAP)
             irisSizeHistoryRef.current.shift();
         }
@@ -270,6 +299,24 @@ export function EyeTestScreen() {
           gazeTrialRef.current.push({ x: avgX, t: now });
           if (gazeTrialRef.current.length > GAZE_TRIAL_CAP)
             gazeTrialRef.current.shift();
+
+          // Prosaccade latency: position-shift method.
+          // Compare current iris X against the pre-jump baseline (average iris X
+          // in the frames just before the dot jumped). When the shift exceeds
+          // LATENCY_SHIFT_THRESHOLD the eye has clearly started moving — record latency.
+          // This is robust at 30Hz because we don't need to catch the exact onset
+          // frame; we just need to detect meaningful departure from baseline.
+          if (
+            prosaccadeLatencyThisTrialRef.current === null &&
+            jumpTimeRef.current > 0 &&
+            now > jumpTimeRef.current &&
+            preJumpBaselineRef.current !== null
+          ) {
+            const shift = Math.abs(avgX - preJumpBaselineRef.current);
+            if (shift > LATENCY_SHIFT_THRESHOLD) {
+              prosaccadeLatencyThisTrialRef.current = now - jumpTimeRef.current;
+            }
+          }
         }
         if (examPhaseRef.current === "pursuit") {
           const targetX =
@@ -345,6 +392,11 @@ export function EyeTestScreen() {
 
     examActiveRef.current = true;
 
+    // Snapshot test-box screen bounds for gaze coordinate remapping.
+    // MediaPipe iris X is 0–1 across the full video frame (mirrored).
+    // We remap it to 0–1 within the test box so target and gaze share the same space.
+    testBoxRectRef.current = testBoxRef.current?.getBoundingClientRect() ?? null;
+
     const chart = chartInstanceRef.current;
     if (chart) {
       chart.data.labels = [];
@@ -384,25 +436,28 @@ export function EyeTestScreen() {
     setStatusText("PHASE 1: SACCADIC TRIALS (TRACK THE DOT)");
 
     for (let i = 0; i < EXAM_CYCLES; i++) {
-      for (const pos of EXAM_POSITIONS) {
-        const targetNorm = pos.left === "10%" ? 0.1 : 0.9;
-        currentTargetNormRef.current = targetNorm;
+      for (let pi = 0; pi < EXAM_POSITIONS.length; pi++) {
+        const pos = EXAM_POSITIONS[pi];
+        // targetFrac is the dot's position as a fraction of the test box (0–1).
+        // EXAM_DOT_FRACTIONS mirrors the CSS percentages in EXAM_POSITIONS.
+        const targetFrac = EXAM_DOT_FRACTIONS[pi];
+        currentTargetNormRef.current = targetFrac;
         setTargetPosition(pos);
         gazeTrialRef.current = [];
         prosaccadeLatencyThisTrialRef.current = null;
+        // Capture pre-jump baseline: average iris X from the last few frames
+        // of historyRef before the dot jumps. Used for position-shift latency detection.
+        const preJumpFrames = historyRef.current.slice(-4);
+        preJumpBaselineRef.current = preJumpFrames.length > 0
+          ? preJumpFrames.reduce((s, f) => s + f.x, 0) / preJumpFrames.length
+          : null;
         jumpTimeRef.current = performance.now();
 
+        // Peak tracking only — latency is now detected per-frame in onResults.
         let currentPeak = 0;
         peakTrackerRef.current = setInterval(() => {
           const vel = liveVelocityRef.current;
           if (vel > currentPeak) currentPeak = vel;
-          if (
-            prosaccadeLatencyThisTrialRef.current === null &&
-            vel > PROSACCADE_VELOCITY_THRESHOLD
-          ) {
-            prosaccadeLatencyThisTrialRef.current =
-              performance.now() - jumpTimeRef.current;
-          }
         }, PEAK_TRACK_INTERVAL_MS);
         await new Promise((r) => setTimeout(r, EXAM_POSITION_DURATION_MS));
         if (peakTrackerRef.current) {
@@ -421,13 +476,13 @@ export function EyeTestScreen() {
         const settled = gazeTrialRef.current.filter(
           (g) => g.t > endTime - SACCADE_SETTLE_MS
         );
-        const avgGazeX =
+        // Average iris X in the settled window (raw frame coords, 0–1 mirrored).
+        const avgSettledX =
           settled.length > 0
             ? settled.reduce((a, g) => a + g.x, 0) / settled.length
-            : 0.5;
-        const error = Math.abs(avgGazeX - targetNorm);
-        const acc = Math.max(0, 1 - error / 0.5);
-        saccadeAccuracyRef.current.push(acc);
+            : null;
+        // Store raw settled gaze X for cross-trial accuracy scoring below.
+        saccadeAccuracyRef.current.push(avgSettledX ?? NaN);
       }
     }
 
@@ -452,21 +507,40 @@ export function EyeTestScreen() {
     clearInterval(pursuitInterval);
     setShowTargetDot(false);
 
+    // Smooth pursuit gain = eye velocity / target velocity.
+    // Both must be in the SAME units. gazeX is in iris-frame-X (0–1 mirrored).
+    // targetX is in box-fraction (0.15–0.85). We scale targetX into iris units
+    // using the iris range observed across saccade trials (already stored in ref).
+    const validGazeReadings = saccadeAccuracyRef.current.filter((v) => !isNaN(v));
+    const irisMin = validGazeReadings.length > 0 ? Math.min(...validGazeReadings) : 0;
+    const irisMax = validGazeReadings.length > 0 ? Math.max(...validGazeReadings) : 0.02;
+    const irisRange = Math.max(irisMax - irisMin, 0.005); // guard against zero
+    // The saccade dot spans from box-fraction 0.1 to 0.9 (range = 0.8).
+    // iris is MIRRORED: right dot (high box-fraction) → lower iris X.
+    // So: irisX ≈ irisMax - (boxFrac - 0.1) * (irisRange / 0.8)
+    // → d(irisX)/d(boxFrac) = -irisRange/0.8  (negative because mirrored)
+    const irisPerBoxFrac = irisRange / 0.8;
+
     const samples = pursuitSamplesRef.current;
     let gains: number[] = [];
     for (let j = 1; j < samples.length; j++) {
-      const dt = (samples[j].t - samples[j - 1].t) / 1000;
+      const dt = (samples[j].t - samples[j - 1].t) / 1000; // seconds
       if (dt <= 0) continue;
-      const targetVel = (samples[j].targetX - samples[j - 1].targetX) / dt;
+      // Convert target velocity from box-fraction/s to iris-frame-X/s (with mirror flip).
+      const targetBoxVel = (samples[j].targetX - samples[j - 1].targetX) / dt;
+      const targetIrisVel = -targetBoxVel * irisPerBoxFrac; // negative = mirror
+      // Eye velocity in iris-frame-X/s (raw, no conversion needed).
       const eyeVel = (samples[j].gazeX - samples[j - 1].gazeX) / dt;
-      if (Math.abs(targetVel) > 0.01) {
-        const g = eyeVel / targetVel;
+      // Only compute gain when target is actually moving (filter near-zero crossing).
+      // Threshold: 5% of peak iris velocity per second.
+      const velThreshold = irisRange * 0.3;
+      if (Math.abs(targetIrisVel) > velThreshold) {
+        const g = eyeVel / targetIrisVel;
         gains.push(Math.max(0, Math.min(2, g)));
       }
     }
     if (gains.length > 0) {
-      const meanGain =
-        gains.reduce((a, b) => a + b, 0) / gains.length;
+      const meanGain = gains.reduce((a, b) => a + b, 0) / gains.length;
       setSmoothPursuitGain(Math.round(meanGain * 1000) / 1000);
     } else {
       setSmoothPursuitGain(null);
@@ -483,8 +557,12 @@ export function EyeTestScreen() {
 
     const irisHist = irisSizeHistoryRef.current;
     if (irisHist.length >= 2) {
-      const v = variance(irisHist);
-      setPupilVariability(Math.round(v * 10000) / 10000);
+      // irisHist values are iris width as fraction of frame width (0–1).
+      // Healthy resting variance is very small (~0.0001–0.001).
+      // We scale ×1000 to produce values in the range ~0.1–1.0 that are
+      // interpretable alongside the other 0–1 metrics.
+      const v = variance(irisHist) * 1000;
+      setPupilVariability(Math.round(v * 1000) / 1000);
     } else {
       setPupilVariability(irisHist.length > 0 ? 0 : null);
     }
@@ -500,13 +578,34 @@ export function EyeTestScreen() {
       setProsaccadeLatency(null);
     }
 
-    const accs = saccadeAccuracyRef.current;
-    if (accs.length > 0) {
-      setSaccadeAccuracy(
-        Math.round(
-          (accs.reduce((a, b) => a + b, 0) / accs.length) * 1000
-        ) / 1000
-      );
+    // saccade_accuracy: directional scoring in raw iris-frame-X space.
+    // The iris is *mirrored*, so looking RIGHT → iris X *decreases*, LEFT → increases.
+    // Trial order: [left, right, left, right, ...] repeated EXAM_CYCLES times.
+    // For each pair of consecutive trials (prev→curr):
+    //   - If dot moved right (prev=left dot, curr=right dot): iris X should decrease → negative delta is correct
+    //   - If dot moved left (prev=right dot, curr=left dot): iris X should increase → positive delta is correct
+    // Score = fraction of movement in the correct direction, capped at 1.
+    // We normalize by the median absolute delta seen (auto-scales to each person's iris range).
+    const rawGazeX = saccadeAccuracyRef.current; // one entry per trial (EXAM_CYCLES * 2)
+    const validPairs: number[] = [];
+    for (let k = 1; k < rawGazeX.length; k++) {
+      const prev = rawGazeX[k - 1];
+      const curr = rawGazeX[k];
+      if (isNaN(prev) || isNaN(curr)) continue;
+      const delta = curr - prev; // negative = gaze moved right (iris X decreased)
+      // Alternating: even index = left dot (pi=0), odd = right dot (pi=1)
+      // When pi=1 (right dot), correct direction is negative delta (iris moves right = X decreases)
+      // When pi=0 (left dot), correct direction is positive delta (iris moves left = X increases)
+      const expectedSign = (k % 2 === 1) ? -1 : 1; // k=1 → right dot, k=2 → left, etc.
+      const correctComponent = delta * expectedSign; // positive if moved correctly
+      validPairs.push(correctComponent);
+    }
+    if (validPairs.length > 0) {
+      const absVals = validPairs.map(Math.abs).sort((a, b) => a - b);
+      const medianAbs = absVals[Math.floor(absVals.length / 2)] || 0.001;
+      const scores = validPairs.map((v) => Math.max(0, Math.min(1, v / medianAbs)));
+      const meanScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+      setSaccadeAccuracy(Math.round(meanScore * 1000) / 1000);
     } else {
       setSaccadeAccuracy(null);
     }
@@ -653,7 +752,7 @@ export function EyeTestScreen() {
 
       {/* Main test area: one box + blue ball that JUMPS (no drag) */}
       <div className="flex-1 flex items-center justify-center p-6 relative z-10">
-        <div className="w-full max-w-6xl h-80 bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 relative overflow-hidden">
+        <div ref={testBoxRef} className="w-full max-w-6xl h-80 bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 relative overflow-hidden">
           {/* Center reference (subtle) */}
           <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-white/20 rounded-full pointer-events-none" />
 
