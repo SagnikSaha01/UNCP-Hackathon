@@ -105,8 +105,11 @@ export function EyeTestScreen() {
   // Used for position-shift latency detection instead of velocity threshold.
   const preJumpBaselineRef = useRef<number | null>(null);
   // Minimum iris shift (in normalized frame units) to count as saccade onset.
-  // ~0.003 ≈ roughly 1–2px of iris movement on a typical webcam frame.
-  const LATENCY_SHIFT_THRESHOLD = 0.003;
+  // 0.008 ≈ ~2–3px shift, above typical gaze jitter/noise at rest.
+  const LATENCY_SHIFT_THRESHOLD = 0.008;
+  // Physiological minimum: true saccade latency is never below ~80ms.
+  // Any detection before this is noise, not a real response.
+  const LATENCY_MIN_MS = 80;
   const gazeTrialRef = useRef<Array<{ x: number; t: number }>>([]);
   const saccadeAccuracyRef = useRef<number[]>([]);
   const currentTargetNormRef = useRef(0.5);
@@ -309,7 +312,7 @@ export function EyeTestScreen() {
           if (
             prosaccadeLatencyThisTrialRef.current === null &&
             jumpTimeRef.current > 0 &&
-            now > jumpTimeRef.current &&
+            now - jumpTimeRef.current >= LATENCY_MIN_MS &&
             preJumpBaselineRef.current !== null
           ) {
             const shift = Math.abs(avgX - preJumpBaselineRef.current);
