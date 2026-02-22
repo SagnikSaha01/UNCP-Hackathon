@@ -10,7 +10,7 @@ export function InstructionsScreen() {
   const navigate = useNavigate();
   const [isPlaying, setIsPlaying] = useState(false);
 
-  const transcript = `Step 1: Follow the Moving Dot. Please sit comfortably in your chair. Keep your head still and straight. You will see a dot moving across the screen. Follow the dot with your eyes only, not your head. The test will take about one minute. When you're ready, press Begin Test.`;
+  const transcript = `Step 1: Follow the dot. Please sit comfortably and keep your head still. A blue dot will flash from side to side—follow it with your eyes only. Then it will move smoothly left and right. Follow the dot with your eyes only, not your head. When you're ready, press Begin Test.`;
 
   return (
     <div className="min-h-screen bg-[#0a0f1e] flex flex-col items-center justify-center p-6 relative overflow-hidden">
@@ -46,30 +46,25 @@ export function InstructionsScreen() {
                 <div className="flex-shrink-0 w-8 h-8 bg-gradient-to-br from-[#00d4ff] to-[#7c3aed] rounded-full flex items-center justify-center text-sm font-semibold text-white">
                   3
                 </div>
-                <p className="text-sm text-white/80 pt-1">Follow the moving dot with your eyes only.</p>
+                <p className="text-sm text-white/80 pt-1">Follow the dot with your eyes only—it will flash side to side, then move smoothly.</p>
               </div>
             </div>
 
-            {/* Animated Demo */}
+            {/* Animated Demo: dot flashes left–right like the real test (saccade trials) */}
             <div className="bg-[#0a0f1e] rounded-xl p-8 relative h-48 overflow-hidden border border-white/5">
-              <div className="text-center mb-6">
-                <p className="text-xs text-white/50">Demo: Watch the dot move</p>
-              </div>
-              <div className="relative h-24">
+              <p className="text-center text-xs text-white/50 mb-2">Demo: Dot flashes side to side</p>
+              <div className="relative h-24 w-full">
                 <motion.div
-                  className="absolute w-6 h-6 bg-gradient-to-br from-[#00d4ff] to-[#7c3aed] rounded-full shadow-lg shadow-[#00d4ff]/50"
+                  className="absolute w-6 h-6 bg-gradient-to-br from-[#00d4ff] to-[#7c3aed] rounded-full shadow-lg shadow-[#00d4ff]/50 -translate-x-1/2 -translate-y-1/2"
+                  style={{ top: "50%" }}
                   animate={{
-                    x: [0, 250, 250, 0, 0],
-                    y: [0, 0, 80, 80, 0],
+                    left: ["10%", "10%", "90%", "90%", "10%"],
                   }}
                   transition={{
-                    duration: 6,
+                    duration: 3,
                     repeat: Infinity,
+                    times: [0, 0.35, 0.42, 0.77, 0.84],
                     ease: "easeInOut",
-                  }}
-                  style={{
-                    left: "calc(50% - 125px)",
-                    top: "calc(50% - 12px)",
                   }}
                 />
               </div>

@@ -1,5 +1,6 @@
 import { createBrowserRouter } from "react-router";
 import { AuthScreen } from "./screens/auth-screen";
+import { AppLayout } from "./components/app-layout";
 import { WelcomeScreen } from "./screens/welcome-screen";
 import { InstructionsScreen } from "./screens/instructions-screen";
 import { EyeTestScreen } from "./screens/eye-test-screen";
@@ -7,6 +8,10 @@ import { VoiceTestScreen } from "./screens/voice-test-screen";
 import { ResultsScreen } from "./screens/results-screen";
 import { EmergencyAlertScreen } from "./screens/emergency-alert-screen";
 import { DashboardScreen } from "./screens/dashboard-screen";
+import { BaselineScreen } from "./screens/baseline-screen";
+import { PostOpScreen } from "./screens/post-op-screen";
+import { AboutScreen } from "./screens/about-screen";
+import { ResearchReferencesScreen } from "./screens/research-references-screen";
 
 export const router = createBrowserRouter([
   {
