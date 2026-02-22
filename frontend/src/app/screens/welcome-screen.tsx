@@ -110,8 +110,8 @@ export function WelcomeScreen() {
 
       </div>
 
-      {/* Floating Voice Assistant Button */}
-      <VoiceAssistantButton transcript={transcript} />
+      {/* Floating Voice Assistant Button – landing only: uses GET /api/voice/instructions?type=landing */}
+      <VoiceAssistantButton instructionType="landing" transcript={transcript} />
     </div>
   );
 }

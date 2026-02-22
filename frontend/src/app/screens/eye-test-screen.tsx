@@ -1,3 +1,4 @@
+import React from "react";
 import { useNavigate } from "react-router";
 import { X } from "lucide-react";
 import {
@@ -35,6 +36,21 @@ const EXAM_POSITIONS = [
   { left: "90%", top: "50%" },
 ];
 
+// --- Additional metrics (fixation, pupil, prosaccade, accuracy, pursuit) ---
+const FIXATION_DURATION_MS = 2500;
+const FIXATION_POSITION = { left: "50%", top: "50%" };
+const PURSUIT_DURATION_MS = 4000;
+const PURSUIT_AMPLITUDE = 0.35; // normalized; target x = 0.5 ± amplitude
+const PURSUIT_PERIOD_MS = 2000; // full sine cycle
+const PROSACCADE_VELOCITY_THRESHOLD = 0.12; // velocity above this = saccade started
+const SACCADE_SETTLE_MS = 400; // use last N ms of each trial for endpoint
+const GAZE_TRIAL_CAP = 80;
+const IRIS_HISTORY_CAP = 300;
+const PURSUIT_SAMPLES_CAP = 200;
+const STABILITY_STD_SCALE = 8; // 1 - min(std * scale, 1) for fixation_stability
+
+type ExamPhase = "fixation" | "saccade" | "pursuit" | "flash" | null;
+
 export function EyeTestScreen() {
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -59,6 +75,19 @@ export function EyeTestScreen() {
   const lastUiUpdateRef = useRef(0);
   const lastChartUpdateRef = useRef(0);
 
+  const examActiveRef = useRef(false);
+  const examPhaseRef = useRef<ExamPhase>(null);
+  const irisSizeHistoryRef = useRef<number[]>([]);
+  const fixationGazeRef = useRef<Array<{ x: number; y: number; t: number }>>([]);
+  const prosaccadeLatenciesRef = useRef<number[]>([]);
+  const prosaccadeLatencyThisTrialRef = useRef<number | null>(null);
+  const jumpTimeRef = useRef(0);
+  const gazeTrialRef = useRef<Array<{ x: number; t: number }>>([]);
+  const saccadeAccuracyRef = useRef<number[]>([]);
+  const currentTargetNormRef = useRef(0.5);
+  const pursuitStartTimeRef = useRef(0);
+  const pursuitSamplesRef = useRef<Array<{ gazeX: number; targetX: number; t: number }>>([]);
+
   const [statusText, setStatusText] = useState(
     "AURA SYSTEM INITIALIZED: CALIBRATION REQUIRED"
   );
@@ -78,6 +107,12 @@ export function EyeTestScreen() {
   const [resultHeaderText, setResultHeaderText] = useState("NORMAL");
   const [finalSaccadeAvg, setFinalSaccadeAvg] = useState("");
   const [cameraError, setCameraError] = useState<string | null>(null);
+
+  const [fixationStability, setFixationStability] = useState<number | null>(null);
+  const [pupilVariability, setPupilVariability] = useState<number | null>(null);
+  const [prosaccadeLatency, setProsaccadeLatency] = useState<number | null>(null);
+  const [saccadeAccuracy, setSaccadeAccuracy] = useState<number | null>(null);
+  const [smoothPursuitGain, setSmoothPursuitGain] = useState<number | null>(null);
 
   function createFaceMesh() {
     if (typeof window === "undefined" || !window.FaceMesh) return null;
@@ -174,6 +209,7 @@ export function EyeTestScreen() {
         const rightIris = landmarks[RIGHT_IRIS];
         const now = performance.now();
         const avgX = (leftIris.x + rightIris.x) / 2;
+        const avgY = (leftIris.y + rightIris.y) / 2;
         historyRef.current.push({ x: avgX, t: now });
         if (historyRef.current.length > HISTORY_LEN)
           historyRef.current.shift();
@@ -211,23 +247,53 @@ export function EyeTestScreen() {
           }
         }
 
-        const irisWidth = Math.sqrt(
-          Math.pow(landmarks[IRIS_RIGHT].x - landmarks[IRIS_LEFT].x, 2) +
-            Math.pow(landmarks[IRIS_RIGHT].y - landmarks[IRIS_LEFT].y, 2)
+        const dx = landmarks[IRIS_RIGHT].x - landmarks[IRIS_LEFT].x;
+        const dy = landmarks[IRIS_RIGHT].y - landmarks[IRIS_LEFT].y;
+        const irisWidthPx = Math.sqrt(
+          (dx * canvas.width) ** 2 + (dy * canvas.height) ** 2
         );
-        const pctStr = (irisWidth * 100).toFixed(1) + "%";
+        const pctOfFrame = (irisWidthPx / canvas.width) * 100;
+        const pctStr = pctOfFrame.toFixed(1) + "%";
         if (now - lastUiUpdateRef.current >= UI_UPDATE_INTERVAL_MS) {
           setIrisSizePct(pctStr);
         }
 
+        if (examActiveRef.current) {
+          irisSizeHistoryRef.current.push(irisWidthPx);
+          if (irisSizeHistoryRef.current.length > IRIS_HISTORY_CAP)
+            irisSizeHistoryRef.current.shift();
+        }
+        if (examActiveRef.current && examPhaseRef.current === "fixation") {
+          fixationGazeRef.current.push({ x: avgX, y: avgY, t: now });
+        }
+        if (examPhaseRef.current === "saccade") {
+          gazeTrialRef.current.push({ x: avgX, t: now });
+          if (gazeTrialRef.current.length > GAZE_TRIAL_CAP)
+            gazeTrialRef.current.shift();
+        }
+        if (examPhaseRef.current === "pursuit") {
+          const targetX =
+            0.5 +
+            PURSUIT_AMPLITUDE *
+              Math.sin(
+                ((now - pursuitStartTimeRef.current) / PURSUIT_PERIOD_MS) *
+                  2 *
+                  Math.PI
+              );
+          pursuitSamplesRef.current.push({ gazeX: avgX, targetX, t: now });
+          if (pursuitSamplesRef.current.length > PURSUIT_SAMPLES_CAP)
+            pursuitSamplesRef.current.shift();
+        }
+
         ctx.strokeStyle = "#00d4ff";
         ctx.lineWidth = 2;
+        const irisRadiusPx = (irisWidthPx / 2) * 0.6;
         [leftIris, rightIris].forEach((eye) => {
           ctx.beginPath();
           ctx.arc(
             eye.x * canvas.width,
             eye.y * canvas.height,
-            irisWidth * canvas.width * 0.6,
+            irisRadiusPx,
             0,
             2 * Math.PI
           );
@@ -265,7 +331,19 @@ export function EyeTestScreen() {
   const runExam = useCallback(async () => {
     setExamRunning(true);
     setExamBtnDisabled(true);
+    setFixationStability(null);
+    setPupilVariability(null);
+    setProsaccadeLatency(null);
+    setSaccadeAccuracy(null);
+    setSmoothPursuitGain(null);
     examSaccadePeaksRef.current = [];
+    irisSizeHistoryRef.current = [];
+    fixationGazeRef.current = [];
+    prosaccadeLatenciesRef.current = [];
+    saccadeAccuracyRef.current = [];
+    pursuitSamplesRef.current = [];
+
+    examActiveRef.current = true;
 
     const chart = chartInstanceRef.current;
     if (chart) {
@@ -275,16 +353,56 @@ export function EyeTestScreen() {
       chart.update();
     }
 
-    setStatusText("PHASE 1: SACCADIC TRIALS (TRACK THE DOT)");
+    const variance = (arr: number[]) => {
+      if (arr.length < 2) return 0;
+      const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+      return arr.reduce((s, v) => s + (v - mean) ** 2, 0) / (arr.length - 1);
+    };
+
+    // --- Phase 0: Fixation (hold still, center dot) ---
+    examPhaseRef.current = "fixation";
+    setStatusText("PHASE 0: FIXATION — HOLD STILL, LOOK AT THE DOT");
     setShowTargetDot(true);
+    setTargetPosition(FIXATION_POSITION);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, FIXATION_DURATION_MS));
+
+    const fix = fixationGazeRef.current;
+    if (fix.length >= 5) {
+      const xs = fix.map((p) => p.x);
+      const ys = fix.map((p) => p.y);
+      const stdX = Math.sqrt(variance(xs));
+      const stdY = Math.sqrt(variance(ys));
+      const stability = Math.max(0, 1 - (stdX + stdY) * STABILITY_STD_SCALE);
+      setFixationStability(Math.round(stability * 1000) / 1000);
+    } else {
+      setFixationStability(fix.length > 0 ? 0 : null);
+    }
+
+    // --- Phase 1: Saccadic trials ---
+    examPhaseRef.current = "saccade";
+    setStatusText("PHASE 1: SACCADIC TRIALS (TRACK THE DOT)");
 
     for (let i = 0; i < EXAM_CYCLES; i++) {
       for (const pos of EXAM_POSITIONS) {
+        const targetNorm = pos.left === "10%" ? 0.1 : 0.9;
+        currentTargetNormRef.current = targetNorm;
         setTargetPosition(pos);
+        gazeTrialRef.current = [];
+        prosaccadeLatencyThisTrialRef.current = null;
+        jumpTimeRef.current = performance.now();
+
         let currentPeak = 0;
         peakTrackerRef.current = setInterval(() => {
           const vel = liveVelocityRef.current;
           if (vel > currentPeak) currentPeak = vel;
+          if (
+            prosaccadeLatencyThisTrialRef.current === null &&
+            vel > PROSACCADE_VELOCITY_THRESHOLD
+          ) {
+            prosaccadeLatencyThisTrialRef.current =
+              performance.now() - jumpTimeRef.current;
+          }
         }, PEAK_TRACK_INTERVAL_MS);
         await new Promise((r) => setTimeout(r, EXAM_POSITION_DURATION_MS));
         if (peakTrackerRef.current) {
@@ -292,15 +410,108 @@ export function EyeTestScreen() {
           peakTrackerRef.current = null;
         }
         if (currentPeak > 0) examSaccadePeaksRef.current.push(currentPeak);
+
+        if (prosaccadeLatencyThisTrialRef.current !== null) {
+          prosaccadeLatenciesRef.current.push(
+            prosaccadeLatencyThisTrialRef.current
+          );
+        }
+
+        const endTime = performance.now();
+        const settled = gazeTrialRef.current.filter(
+          (g) => g.t > endTime - SACCADE_SETTLE_MS
+        );
+        const avgGazeX =
+          settled.length > 0
+            ? settled.reduce((a, g) => a + g.x, 0) / settled.length
+            : 0.5;
+        const error = Math.abs(avgGazeX - targetNorm);
+        const acc = Math.max(0, 1 - error / 0.5);
+        saccadeAccuracyRef.current.push(acc);
       }
     }
 
+    // --- Phase 2: Smooth pursuit ---
+    examPhaseRef.current = "pursuit";
+    pursuitStartTimeRef.current = performance.now();
+    setStatusText("PHASE 2: SMOOTH PURSUIT — FOLLOW THE MOVING DOT");
+    setShowTargetDot(true);
+    const pursuitStart = performance.now();
+    const pursuitInterval = setInterval(() => {
+      const elapsed = performance.now() - pursuitStart;
+      const x =
+        0.5 +
+        PURSUIT_AMPLITUDE *
+          Math.sin((elapsed / PURSUIT_PERIOD_MS) * 2 * Math.PI);
+      setTargetPosition({
+        left: `${x * 100}%`,
+        top: "50%",
+      });
+    }, 50);
+    await new Promise((r) => setTimeout(r, PURSUIT_DURATION_MS));
+    clearInterval(pursuitInterval);
     setShowTargetDot(false);
-    setStatusText("PHASE 2: PUPILLARY STIMULUS (FLASH)");
+
+    const samples = pursuitSamplesRef.current;
+    let gains: number[] = [];
+    for (let j = 1; j < samples.length; j++) {
+      const dt = (samples[j].t - samples[j - 1].t) / 1000;
+      if (dt <= 0) continue;
+      const targetVel = (samples[j].targetX - samples[j - 1].targetX) / dt;
+      const eyeVel = (samples[j].gazeX - samples[j - 1].gazeX) / dt;
+      if (Math.abs(targetVel) > 0.01) {
+        const g = eyeVel / targetVel;
+        gains.push(Math.max(0, Math.min(2, g)));
+      }
+    }
+    if (gains.length > 0) {
+      const meanGain =
+        gains.reduce((a, b) => a + b, 0) / gains.length;
+      setSmoothPursuitGain(Math.round(meanGain * 1000) / 1000);
+    } else {
+      setSmoothPursuitGain(null);
+    }
+
+    // --- Phase 3: Pupillary flash ---
+    examPhaseRef.current = "flash";
+    setShowTargetDot(false);
+    setStatusText("PHASE 3: PUPILLARY STIMULUS (FLASH)");
     setShowFlash(true);
     await new Promise((r) => setTimeout(r, FLASH_DURATION_MS));
     setShowFlash(false);
+    examPhaseRef.current = null;
 
+    const irisHist = irisSizeHistoryRef.current;
+    if (irisHist.length >= 2) {
+      const v = variance(irisHist);
+      setPupilVariability(Math.round(v * 10000) / 10000);
+    } else {
+      setPupilVariability(irisHist.length > 0 ? 0 : null);
+    }
+
+    const latencies = prosaccadeLatenciesRef.current;
+    if (latencies.length > 0) {
+      setProsaccadeLatency(
+        Math.round(
+          (latencies.reduce((a, b) => a + b, 0) / latencies.length) * 10
+        ) / 10
+      );
+    } else {
+      setProsaccadeLatency(null);
+    }
+
+    const accs = saccadeAccuracyRef.current;
+    if (accs.length > 0) {
+      setSaccadeAccuracy(
+        Math.round(
+          (accs.reduce((a, b) => a + b, 0) / accs.length) * 1000
+        ) / 1000
+      );
+    } else {
+      setSaccadeAccuracy(null);
+    }
+
+    examActiveRef.current = false;
     setExamRunning(false);
 
     const peaks = examSaccadePeaksRef.current;
@@ -521,15 +732,48 @@ export function EyeTestScreen() {
               disabled={examBtnDisabled}
               className="col-span-2 h-11 rounded-xl font-semibold bg-white/10 text-white border border-white/20 hover:bg-white/20 disabled:opacity-50 disabled:grayscale"
             >
-              2. Start AURA Exam (30s)
+              2. Start AURA Exam
             </Button>
             {showResultsModal && (
-              <Button
-                onClick={handleContinue}
-                className="col-span-2 h-11 rounded-xl font-semibold bg-[#00d4ff] text-[#0a0f1e] hover:opacity-90"
-              >
-                Continue to Voice Test
-              </Button>
+              <>
+                <div className="col-span-2 rounded-xl bg-white/5 border border-white/10 p-4 space-y-2">
+                  <p className="text-[10px] text-white/50 uppercase tracking-wider mb-2">
+                    Tracked metrics
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-white/70">saccade_velocity</span>
+                      <span className="text-white tabular-nums">{finalSaccadeAvg || "—"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/70">fixation_stability</span>
+                      <span className="text-white tabular-nums">{fixationStability ?? "—"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/70">pupil_variability</span>
+                      <span className="text-white tabular-nums">{pupilVariability ?? "—"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/70">prosaccade_latency (ms)</span>
+                      <span className="text-white tabular-nums">{prosaccadeLatency ?? "—"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/70">smooth_pursuit_gain</span>
+                      <span className="text-white tabular-nums">{smoothPursuitGain ?? "—"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/70">saccade_accuracy</span>
+                      <span className="text-white tabular-nums">{saccadeAccuracy ?? "—"}</span>
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  onClick={handleContinue}
+                  className="col-span-2 h-11 rounded-xl font-semibold bg-[#00d4ff] text-[#0a0f1e] hover:opacity-90"
+                >
+                  Continue to Voice Test
+                </Button>
+              </>
             )}
           </div>
         </div>

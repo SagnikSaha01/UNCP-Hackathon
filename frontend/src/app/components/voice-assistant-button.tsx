@@ -12,9 +12,11 @@ interface VoiceAssistantButtonProps {
   onPlay?: () => void;
   /** When set, Play will call this API to speak the transcript (e.g. landing page). */
   apiBaseUrl?: string;
+  /** Landing page only: use GET /api/voice/instructions?type=... instead of POST generate. */
+  instructionType?: string;
 }
 
-export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl }: VoiceAssistantButtonProps) {
+export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl, instructionType }: VoiceAssistantButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -40,48 +42,55 @@ export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl }: VoiceAs
     setIsPlaying(false);
   };
 
+  const hasPlaybackContent = (instructionType != null && instructionType !== "") || (transcript?.trim() ?? "") !== "";
+
   const handlePlayPause = async () => {
     if (isPlaying) {
       stopAudio();
       return;
     }
-    if (transcript?.trim() && baseUrl) {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`${baseUrl}/api/voice/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: transcript.trim() }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: res.statusText }));
-          throw new Error(err.detail || "Failed to get audio");
-        }
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        objectUrlRef.current = url;
-        const audio = new Audio(url);
-        audioRef.current = audio;
-        audio.volume = volume[0] / 100;
-        audio.onended = stopAudio;
-        audio.onerror = () => {
-          setError("Playback failed");
-          stopAudio();
-        };
-        await audio.play();
-        setIsPlaying(true);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not play audio");
-        stopAudio();
-      } finally {
-        setIsLoading(false);
-      }
+    if (!baseUrl || !hasPlaybackContent) {
+      setIsPlaying(!isPlaying);
       onPlay?.();
       return;
     }
-    setIsPlaying(!isPlaying);
-    onPlay?.();
+    setIsLoading(true);
+    setError(null);
+    try {
+      let res: Response;
+      if (instructionType) {
+        res = await fetch(`${baseUrl}/api/voice/instructions?type=${encodeURIComponent(instructionType)}`);
+      } else {
+        res = await fetch(`${baseUrl}/api/voice/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: transcript!.trim() }),
+        });
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Failed to get audio");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      objectUrlRef.current = url;
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.volume = volume[0] / 100;
+      audio.onended = stopAudio;
+      audio.onerror = () => {
+        setError("Playback failed");
+        stopAudio();
+      };
+      await audio.play();
+      setIsPlaying(true);
+      onPlay?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not play audio");
+      stopAudio();
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -125,14 +134,14 @@ export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl }: VoiceAs
           </div>
 
           <div className="space-y-4">
-            {/* Play/Pause – reads the page aloud via API when transcript is provided */}
+            {/* Play/Pause – landing uses instructions?type=landing; others use generate with transcript */}
             {error && (
               <p className="text-xs text-red-400 bg-red-500/10 rounded-lg px-3 py-2">{error}</p>
             )}
             <div className="flex gap-2">
               <Button
                 onClick={handlePlayPause}
-                disabled={isLoading || !transcript?.trim()}
+                disabled={isLoading || !hasPlaybackContent}
                 className="flex-1 bg-gradient-to-r from-[#00d4ff] to-[#7c3aed] hover:opacity-90 text-white h-11 text-sm rounded-xl"
               >
                 {isLoading ? (
@@ -145,7 +154,7 @@ export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl }: VoiceAs
                 ) : (
                   <>
                     <Play className="h-4 w-4 mr-2" />
-                    {transcript?.trim() ? "Read page aloud" : "Play"}
+                    {hasPlaybackContent ? "Read page aloud" : "Play"}
                   </>
                 )}
               </Button>
@@ -186,7 +195,7 @@ export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl }: VoiceAs
             </div>
 
             {/* Transcript Toggle */}
-            {transcript && (
+            {(transcript || instructionType) && (
               <>
                 <button
                   onClick={() => setShowTranscript(!showTranscript)}
@@ -202,7 +211,7 @@ export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl }: VoiceAs
 
                 {showTranscript && (
                   <div className="p-3 bg-white/5 rounded-xl border border-white/5 max-h-32 overflow-y-auto">
-                    <p className="text-xs text-white/70 leading-relaxed">{transcript}</p>
+                    <p className="text-xs text-white/70 leading-relaxed">{transcript || (instructionType ? "Use Read page aloud to hear this page." : "")}</p>
                   </div>
                 )}
               </>
