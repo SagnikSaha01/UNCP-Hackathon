@@ -200,7 +200,7 @@ def _http_get_json(url: str, headers: dict[str, str] | None = None) -> dict[str,
 
 
 async def _fetch_patient_name_from_api(patient_id: str) -> str | None:
-    """Fetch patient name via internal API call to /api/patients/{patient_id}."""
+    """Fetch patient name via internal API call to /patients/{patient_id}."""
     pid = str(patient_id or "").strip()
     if not pid:
         return None
@@ -210,7 +210,7 @@ async def _fetch_patient_name_from_api(patient_id: str) -> str | None:
         or os.environ.get("API_BASE_URL")
         or "http://127.0.0.1:8000"
     ).rstrip("/")
-    endpoint = f"{base_url}/api/patients/{urllib.parse.quote(pid, safe='')}"
+    endpoint = f"{base_url}/patients/{urllib.parse.quote(pid, safe='')}"
 
     try:
         payload = await asyncio.to_thread(_http_get_json, endpoint)
@@ -1289,7 +1289,7 @@ def _build_backboard_base_system_prompt(
     research_context: str,
     research_files: list[str],
 ) -> str:
-    """Single shared Backboard prompt used by both /api/analyze and /api/chat.
+    """Single shared Backboard prompt used by both /analyze and /chat.
 
     Context is injected once at assistant creation time, then each endpoint sends
     only incremental input (analyze payload or chat message).
@@ -1661,7 +1661,7 @@ async def chat_with_research_context(message: str) -> dict[str, str]:
         return {"chatbot_response": f"Chat generation failed: {exc}"}
 
 
-@router.post("/api/analyze")
+@router.post("/analyze")
 async def analyze_route(data: dict[str, Any]):
     result = await analyze_eye_movement(data)
     patient_name = await _fetch_patient_name_from_api(str(data.get("patient_id", "")))
@@ -1669,7 +1669,7 @@ async def analyze_route(data: dict[str, Any]):
     return result
 
 
-@router.post("/api/chat")
+@router.post("/chat")
 async def chat_route(data: dict[str, Any]):
     return await chat_with_research_context(str(data.get("message", "")))
 

@@ -386,12 +386,12 @@ async def update_session_audit(
 # API routes (mounted by main.py)
 # ---------------------------------------------------------------------------
 
-@router.get("/api/patients")
+@router.get("/patients")
 async def list_patients_route():
     return await list_patients()
 
 
-@router.post("/api/patients")
+@router.post("/patients")
 async def create_patient_route(body: dict):
     return await create_patient(
         name=body["name"],
@@ -404,7 +404,7 @@ async def create_patient_route(body: dict):
     )
 
 
-@router.get("/api/patients/{patient_id}")
+@router.get("/patients/{patient_id}")
 async def get_patient_route(patient_id: str):
     patient = await get_patient(patient_id)
     if not patient:
@@ -412,7 +412,7 @@ async def get_patient_route(patient_id: str):
     return patient
 
 
-@router.post("/api/session")
+@router.post("/session")
 async def create_session_route(body: dict):
     if "time_series" not in body or not isinstance(body["time_series"], list):
         raise HTTPException(
@@ -429,20 +429,20 @@ async def create_session_route(body: dict):
     )
 
 
-@router.get("/api/session/{patient_id}")
+@router.get("/session/{patient_id}")
 async def get_sessions_route(patient_id: str):
     return await get_sessions_for_patient(patient_id)
 
 
-@router.get("/api/longitudinal/{patient_id}")
+@router.get("/longitudinal/{patient_id}")
 async def get_longitudinal_route(patient_id: str):
     sessions = await get_sessions_for_patient(patient_id)
     return build_longitudinal_summary(sessions)
 
 
-@router.get("/api/fetch-input/{patient_id}")
+@router.get("/fetch-input/{patient_id}")
 async def get_analyze_input_route(patient_id: str):
-    """Return payload formatted for direct POST to /api/analyze.
+    """Return payload formatted for direct POST to /analyze.
 
     Shape:
     {
