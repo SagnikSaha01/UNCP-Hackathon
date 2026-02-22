@@ -1,26 +1,96 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { Volume2, X, Play, Pause, RotateCcw, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Slider } from "../components/ui/slider";
 import { Switch } from "../components/ui/switch";
 import { useAccessibility } from "../context/accessibility-context";
 
+const DEFAULT_API_BASE = "https://aura-arf5n.ondigitalocean.app/";
+
 interface VoiceAssistantButtonProps {
   transcript?: string;
   onPlay?: () => void;
+  /** When set, Play will call this API to speak the transcript (e.g. landing page). */
+  apiBaseUrl?: string;
+  /** Landing page only: use GET /api/voice/instructions?type=... instead of POST generate. */
+  instructionType?: string;
 }
 
-export function VoiceAssistantButton({ transcript, onPlay }: VoiceAssistantButtonProps) {
+export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl, instructionType }: VoiceAssistantButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [volume, setVolume] = useState([70]);
   const [slowMode, setSlowMode] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
   const { voiceGuidance, setVoiceGuidance } = useAccessibility();
 
-  const handlePlayPause = () => {
-    setIsPlaying(!isPlaying);
-    onPlay?.();
+  const baseUrl = apiBaseUrl ?? DEFAULT_API_BASE;
+
+  const stopAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+    setIsPlaying(false);
+  };
+
+  const hasPlaybackContent = (instructionType != null && instructionType !== "") || (transcript?.trim() ?? "") !== "";
+
+  const handlePlayPause = async () => {
+    if (isPlaying) {
+      stopAudio();
+      return;
+    }
+    if (!baseUrl || !hasPlaybackContent) {
+      setIsPlaying(!isPlaying);
+      onPlay?.();
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      let res: Response;
+      if (instructionType) {
+        res = await fetch(`${baseUrl}/api/voice/instructions?type=${encodeURIComponent(instructionType)}`);
+      } else {
+        res = await fetch(`${baseUrl}/api/voice/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: transcript!.trim() }),
+        });
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Failed to get audio");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      objectUrlRef.current = url;
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.volume = volume[0] / 100;
+      audio.onended = stopAudio;
+      audio.onerror = () => {
+        setError("Playback failed");
+        stopAudio();
+      };
+      await audio.play();
+      setIsPlaying(true);
+      onPlay?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not play audio");
+      stopAudio();
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -64,13 +134,19 @@ export function VoiceAssistantButton({ transcript, onPlay }: VoiceAssistantButto
           </div>
 
           <div className="space-y-4">
-            {/* Play/Pause Controls */}
+            {/* Play/Pause – landing uses instructions?type=landing; others use generate with transcript */}
+            {error && (
+              <p className="text-xs text-red-400 bg-red-500/10 rounded-lg px-3 py-2">{error}</p>
+            )}
             <div className="flex gap-2">
               <Button
                 onClick={handlePlayPause}
+                disabled={isLoading || !hasPlaybackContent}
                 className="flex-1 bg-gradient-to-r from-[#00d4ff] to-[#7c3aed] hover:opacity-90 text-white h-11 text-sm rounded-xl"
               >
-                {isPlaying ? (
+                {isLoading ? (
+                  <>Loading…</>
+                ) : isPlaying ? (
                   <>
                     <Pause className="h-4 w-4 mr-2" />
                     Pause
@@ -78,7 +154,7 @@ export function VoiceAssistantButton({ transcript, onPlay }: VoiceAssistantButto
                 ) : (
                   <>
                     <Play className="h-4 w-4 mr-2" />
-                    Play
+                    {hasPlaybackContent ? "Read page aloud" : "Play"}
                   </>
                 )}
               </Button>
@@ -86,6 +162,7 @@ export function VoiceAssistantButton({ transcript, onPlay }: VoiceAssistantButto
                 variant="outline"
                 className="h-11 px-4 border border-white/10 bg-white/5 text-white hover:bg-white/10 rounded-xl"
                 onClick={handlePlayPause}
+                disabled={isLoading}
                 aria-label="Repeat"
               >
                 <RotateCcw className="h-4 w-4" />
@@ -118,7 +195,7 @@ export function VoiceAssistantButton({ transcript, onPlay }: VoiceAssistantButto
             </div>
 
             {/* Transcript Toggle */}
-            {transcript && (
+            {(transcript || instructionType) && (
               <>
                 <button
                   onClick={() => setShowTranscript(!showTranscript)}
@@ -134,20 +211,11 @@ export function VoiceAssistantButton({ transcript, onPlay }: VoiceAssistantButto
 
                 {showTranscript && (
                   <div className="p-3 bg-white/5 rounded-xl border border-white/5 max-h-32 overflow-y-auto">
-                    <p className="text-xs text-white/70 leading-relaxed">{transcript}</p>
+                    <p className="text-xs text-white/70 leading-relaxed">{transcript || (instructionType ? "Use Read page aloud to hear this page." : "")}</p>
                   </div>
                 )}
               </>
             )}
-
-            {/* Repeat Last Instruction */}
-            <Button
-              variant="outline"
-              className="w-full h-10 text-sm border border-white/10 bg-white/5 text-white hover:bg-white/10 rounded-xl"
-            >
-              <RotateCcw className="h-4 w-4 mr-2" />
-              Repeat
-            </Button>
 
             {/* Voice Guidance — in assistant panel */}
             <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">

@@ -1,0 +1,10 @@
+{
+  "risk_level": "low | moderate | high",
+  "conditions_flagged": ["post_op_delirium", "subclinical_stroke"],
+  "confidence_score": "0-1",
+  "explanation": [
+    "metric_name:baseline_value:latest_value:evidence sentence",
+    "metric_name:baseline_value:latest_value:evidence sentence"
+  ],
+  "research_references_used": ["paper_name_1.pdf", "paper_name_2.pdf"]
+}
