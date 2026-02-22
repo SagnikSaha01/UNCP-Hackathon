@@ -4,15 +4,14 @@ import { Button } from "../components/ui/button";
 import { Slider } from "../components/ui/slider";
 import { Switch } from "../components/ui/switch";
 import { useAccessibility } from "../context/accessibility-context";
-
-const DEFAULT_API_BASE = "https://aura-arf5n.ondigitalocean.app";
+import { buildApiUrl } from "../config/api";
 
 interface VoiceAssistantButtonProps {
   transcript?: string;
   onPlay?: () => void;
-  /** When set, Play will call this API to speak the transcript (e.g. landing page). */
+  /** Optional override base URL for custom environments. */
   apiBaseUrl?: string;
-  /** Landing page only: use GET /api/voice/instructions?type=... instead of POST generate. */
+  /** Landing page only: use GET /voice/instructions?type=... instead of POST generate. */
   instructionType?: string;
 }
 
@@ -28,7 +27,14 @@ export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl, instructi
   const objectUrlRef = useRef<string | null>(null);
   const { voiceGuidance, setVoiceGuidance } = useAccessibility();
 
-  const baseUrl = apiBaseUrl ?? DEFAULT_API_BASE;
+  const resolveUrl = (endpoint: string) => {
+    if (apiBaseUrl) {
+      const base = apiBaseUrl.replace(/\/$/, "");
+      const path = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+      return `${base}${path}`;
+    }
+    return buildApiUrl(endpoint);
+  };
 
   const stopAudio = () => {
     if (audioRef.current) {
@@ -49,7 +55,7 @@ export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl, instructi
       stopAudio();
       return;
     }
-    if (!baseUrl || !hasPlaybackContent) {
+    if (!hasPlaybackContent) {
       setIsPlaying(!isPlaying);
       onPlay?.();
       return;
@@ -59,9 +65,11 @@ export function VoiceAssistantButton({ transcript, onPlay, apiBaseUrl, instructi
     try {
       let res: Response;
       if (instructionType) {
-        res = await fetch(`${baseUrl}/api/voice/instructions?type=${encodeURIComponent(instructionType)}`);
+        res = await fetch(
+          `${resolveUrl("/voice/instructions")}?type=${encodeURIComponent(instructionType)}`,
+        );
       } else {
-        res = await fetch(`${baseUrl}/api/voice/generate`, {
+        res = await fetch(resolveUrl("/voice/generate"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: transcript!.trim() }),
