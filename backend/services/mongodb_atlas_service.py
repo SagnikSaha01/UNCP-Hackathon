@@ -440,6 +440,51 @@ async def get_longitudinal_route(patient_id: str):
     return build_longitudinal_summary(sessions)
 
 
+@router.get("/api/fetch-input/{patient_id}")
+async def get_analyze_input_route(patient_id: str):
+    """Return payload formatted for direct POST to /api/analyze.
+
+    Shape:
+    {
+      "patient_id": "...",
+      "age": 72,
+      "baseline": {...},
+      "time_series": [...]
+    }
+    """
+    patient = await get_patient(patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    latest_session = await get_prior_session(patient_id)
+    if not latest_session:
+        raise HTTPException(
+            status_code=404,
+            detail="No completed session found for this patient",
+        )
+
+    baseline = patient.get("baseline")
+    if baseline is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Patient baseline is not set yet",
+        )
+
+    time_series = latest_session.get("time_series")
+    if not isinstance(time_series, list) or not time_series:
+        raise HTTPException(
+            status_code=422,
+            detail="Latest session has no valid time_series data",
+        )
+
+    return {
+        "patient_id": patient.get("patient_id", patient_id),
+        "age": patient.get("age", 0),
+        "baseline": baseline,
+        "time_series": time_series,
+    }
+
+
 # ---------------------------------------------------------------------------
 # PHYSICIANS
 # ---------------------------------------------------------------------------
