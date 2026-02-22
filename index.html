@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AURA — Automated Universal Recovery Assessment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-deep: #0a0f1e;
+      --bg-card: rgba(15, 23, 42, 0.6);
+      --bg-glass: rgba(255, 255, 255, 0.04);
+      --border-glass: rgba(255, 255, 255, 0.08);
+      --teal: #00d4ff;
+      --teal-dim: rgba(0, 212, 255, 0.5);
+      --violet: #7c3aed;
+      --violet-dim: rgba(124, 58, 237, 0.5);
+      --green: #00ff88;
+      --amber: #ffb800;
+      --red: #ff4444;
+      --text: rgba(255, 255, 255, 0.92);
+      --text-muted: rgba(255, 255, 255, 0.55);
+      --radius: 16px;
+      --radius-lg: 24px;
+      --shadow-glow: 0 0 60px rgba(0, 212, 255, 0.15);
+      --font: 'Plus Jakarta Sans', -apple-system, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: var(--bg-deep);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Animated background */
+    .aura-bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+    }
+    .aura-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.35;
+      animation: orb-float 25s ease-in-out infinite;
+    }
+    .aura-orb:nth-child(1) { width: 400px; height: 400px; background: var(--teal); top: -10%; left: -10%; animation-delay: 0s; }
+    .aura-orb:nth-child(2) { width: 350px; height: 350px; background: var(--violet); top: 50%; right: -15%; animation-delay: -8s; }
+    .aura-orb:nth-child(3) { width: 300px; height: 300px; background: var(--teal); bottom: -10%; left: 30%; animation-delay: -16s; }
+    .particle {
+      position: absolute;
+      width: 2px; height: 2px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 50%;
+      animation: particle-drift 20s linear infinite;
+    }
+    @keyframes orb-float {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      33% { transform: translate(30px, -40px) scale(1.05); }
+      66% { transform: translate(-20px, 20px) scale(0.95); }
+    }
+    @keyframes particle-drift {
+      0% { transform: translate(0, 100vh) rotate(0deg); opacity: 0; }
+      10% { opacity: 0.15; }
+      90% { opacity: 0.15; }
+      100% { transform: translate(-100px, -100px) rotate(720deg); opacity: 0; }
+    }
+
+    .app {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+    }
+
+    .screen {
+      display: none;
+      min-height: 100vh;
+      padding: 2rem;
+      animation: screen-in 0.5s ease-out;
+    }
+    .screen.active { display: block; }
+    @keyframes screen-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Buttons */
+    .btn {
+      font-family: var(--font);
+      font-weight: 600;
+      padding: 1rem 2rem;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .btn:active { transform: translateY(0); }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--teal), #00a8cc);
+      color: var(--bg-deep);
+      box-shadow: 0 4px 24px rgba(0, 212, 255, 0.4);
+    }
+    .btn-primary:hover { box-shadow: 0 8px 32px rgba(0, 212, 255, 0.5); }
+    .btn-secondary {
+      background: var(--bg-glass);
+      color: var(--teal);
+      border: 1px solid var(--border-glass);
+    }
+    .btn-secondary:hover { background: rgba(0, 212, 255, 0.1); }
+
+    /* ========== LANDING ========== */
+    .landing {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 3rem 2rem;
+    }
+    .aura-logo {
+      width: 100px;
+      height: 100px;
+      margin-bottom: 1.5rem;
+      position: relative;
+    }
+    .aura-logo svg {
+      width: 100%;
+      height: 100%;
+      filter: drop-shadow(0 0 30px var(--teal-dim));
+      animation: logo-pulse 3s ease-in-out infinite;
+    }
+    @keyframes logo-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.9; transform: scale(1.02); }
+    }
+    .landing h1 {
+      font-size: clamp(2.5rem, 6vw, 4rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #fff 0%, var(--teal) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.5rem;
+    }
+    .landing .tagline {
+      font-size: 1.25rem;
+      color: var(--text-muted);
+      margin-bottom: 2.5rem;
+      font-weight: 400;
+    }
+    .heartbeat-line {
+      width: 100%;
+      max-width: 400px;
+      height: 4px;
+      background: linear-gradient(90deg, transparent, var(--teal), var(--violet), transparent);
+      border-radius: 2px;
+      margin-bottom: 2.5rem;
+      overflow: hidden;
+    }
+    .heartbeat-line::after {
+      content: '';
+      display: block;
+      width: 60%;
+      height: 100%;
+      background: rgba(255,255,255,0.3);
+      border-radius: 2px;
+      animation: heartbeat-slide 2.5s ease-in-out infinite;
+    }
+    @keyframes heartbeat-slide {
+      0%, 100% { transform: translateX(-100%); }
+      50% { transform: translateX(200%); }
+    }
+    .landing-ctas {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .landing-ctas .btn { min-width: 220px; }
+
+    /* ========== PROGRESS STEPS ========== */
+    .progress-steps {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-bottom: 2rem;
+    }
+    .progress-step {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+    .progress-step.active { color: var(--teal); font-weight: 600; }
+    .progress-step.done { color: var(--green); }
+    .progress-step .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      opacity: 0.5;
+    }
+    .progress-step.active .dot { background: var(--teal); opacity: 1; box-shadow: 0 0 12px var(--teal); }
+    .progress-step.done .dot { background: var(--green); opacity: 1; }
+    .progress-connector {
+      width: 40px;
+      height: 2px;
+      background: var(--border-glass);
+    }
+    .progress-connector.done { background: var(--green); }
+
+    /* ========== INTAKE ========== */
+    .intake-form {
+      max-width: 520px;
+      margin: 0 auto;
+    }
+    .glass-card {
+      background: var(--bg-glass);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+      box-shadow: var(--shadow-glow);
+    }
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+    .form-group label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+    .form-group input, .form-group select {
+      width: 100%;
+      padding: 0.875rem 1rem;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 1rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .form-group input:focus, .form-group select:focus {
+      outline: none;
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.15);
+    }
+    .intake-form .btn { width: 100%; margin-top: 0.5rem; }
+
+    /* ========== PRE-OP / POST-OP ========== */
+    .assessment-screen h2 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      text-align: center;
+      margin-bottom: 2rem;
+      color: var(--text);
+    }
+    .assessment-instruction {
+      text-align: center;
+      color: var(--text-muted);
+      max-width: 400px;
+      margin: 0 auto 2rem;
+      line-height: 1.6;
+    }
+    .test-modules {
+      display: grid;
+      gap: 1.5rem;
+      max-width: 700px;
+      margin: 0 auto 2rem;
+    }
+    .test-card {
+      background: var(--bg-glass);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .test-card:hover { border-color: rgba(0, 212, 255, 0.2); }
+    .test-card h3 {
+      font-size: 1.125rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .test-card h3 .icon { color: var(--teal); }
+    .ocular-canvas-wrap {
+      position: relative;
+      width: 100%;
+      height: 200px;
+      background: rgba(0,0,0,0.3);
+      border-radius: var(--radius);
+      margin-bottom: 1rem;
+      overflow: hidden;
+    }
+    .ocular-dot {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      background: var(--teal);
+      border-radius: 50%;
+      box-shadow: 0 0 24px var(--teal), 0 0 48px var(--teal-dim);
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      transition: left 0.1s linear, top 0.1s linear;
+    }
+    .ocular-dot.postop { animation: erratic-dot 4s ease-in-out infinite; }
+    .progress-ring-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .progress-ring {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      padding: 3px;
+      background: var(--border-glass);
+    }
+    .progress-ring-inner {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: var(--bg-deep);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--teal);
+    }
+    .vocal-phrase {
+      font-size: 1rem;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 1rem;
+      margin: 1rem 0;
+      background: rgba(0,0,0,0.2);
+      border-radius: var(--radius);
+      font-style: italic;
+    }
+    .sound-wave {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      height: 48px;
+      margin: 1rem 0;
+    }
+    .sound-bar {
+      width: 4px;
+      height: 12px;
+      background: var(--teal);
+      border-radius: 2px;
+      animation: sound-wave 1.2s ease-in-out infinite;
+    }
+    .sound-bar:nth-child(1) { animation-delay: 0s; }
+    .sound-bar:nth-child(2) { animation-delay: 0.1s; }
+    .sound-bar:nth-child(3) { animation-delay: 0.2s; }
+    .sound-bar:nth-child(4) { animation-delay: 0.3s; }
+    .sound-bar:nth-child(5) { animation-delay: 0.4s; }
+    .sound-bar:nth-child(6) { animation-delay: 0.5s; }
+    .sound-bar:nth-child(7) { animation-delay: 0.6s; }
+    .sound-bar:nth-child(8) { animation-delay: 0.7s; }
+    .sound-bar:nth-child(9) { animation-delay: 0.8s; }
+    .sound-bar:nth-child(10) { animation-delay: 0.9s; }
+    @keyframes sound-wave {
+      0%, 100% { transform: scaleY(0.4); }
+      50% { transform: scaleY(1); }
+    }
+    .sound-wave.postop .sound-bar { animation: sound-wave-erratic 1.5s ease-in-out infinite; }
+    @keyframes sound-wave-erratic {
+      0%, 100% { transform: scaleY(0.3) scaleX(1.2); }
+      25% { transform: scaleY(0.9) scaleX(0.8); }
+      50% { transform: scaleY(0.2) scaleX(1.1); }
+      75% { transform: scaleY(0.7) scaleX(0.9); }
+    }
+    @keyframes erratic-dot {
+      0%, 100% { transform: translate(-50%, -50%) translate(0, 0); }
+      25% { transform: translate(-50%, -50%) translate(8px, -5px); }
+      50% { transform: translate(-50%, -50%) translate(-6px, 10px); }
+      75% { transform: translate(-50%, -50%) translate(4px, 6px); }
+    }
+    .record-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.5rem;
+      background: var(--bg-glass);
+      border: 1px solid var(--teal);
+      color: var(--teal);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 0.875rem;
+      transition: all 0.2s;
+    }
+    .record-btn:hover { background: rgba(0, 212, 255, 0.1); }
+    .record-btn.recording {
+      background: rgba(255, 68, 68, 0.2);
+      border-color: var(--red);
+      color: var(--red);
+      animation: record-pulse 1s ease-in-out infinite;
+    }
+    @keyframes record-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0.4); }
+      50% { box-shadow: 0 0 0 12px rgba(255, 68, 68, 0); }
+    }
+    .record-btn .dot { width: 8px; height: 8px; background: currentColor; border-radius: 50%; }
+    .baseline-score-card {
+      max-width: 400px;
+      margin: 2rem auto;
+      padding: 2rem;
+      background: var(--bg-glass);
+      border: 1px solid rgba(0, 255, 136, 0.2);
+      border-radius: var(--radius-lg);
+      text-align: center;
+    }
+    .baseline-score-card.postop { border-color: rgba(255, 184, 0, 0.3); }
+    .baseline-score-card .score-big {
+      font-size: 3rem;
+      font-weight: 700;
+      color: var(--green);
+    }
+    .baseline-score-card.postop .score-big { color: var(--amber); }
+    .baseline-score-card .label { color: var(--text-muted); margin-top: 0.25rem; }
+    .baseline-score-card .status-row {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+    .baseline-score-card .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      display: inline-block;
+      margin-right: 0.25rem;
+    }
+    .baseline-score-card.postop .status-dot.amber { background: var(--amber); }
+    .baseline-score-card.postop .status-dot.red { background: var(--red); }
+    .assessment-screen .nav-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    /* ========== REPORT ========== */
+    .report-screen {
+      padding: 2rem 1rem;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    .report-screen h2 {
+      text-align: center;
+      font-size: 1.75rem;
+      margin-bottom: 2rem;
+      font-weight: 600;
+    }
+    .gauge-wrap {
+      position: relative;
+      width: 220px;
+      height: 220px;
+      margin: 0 auto 2rem;
+    }
+    .gauge-svg {
+      width: 100%;
+      height: 100%;
+      transform: rotate(-90deg);
+    }
+    .gauge-svg .track { stroke: var(--border-glass); fill: none; stroke-width: 12; }
+    .gauge-svg .fill {
+      stroke: var(--red);
+      fill: none;
+      stroke-width: 12;
+      stroke-linecap: round;
+      stroke-dasharray: 339.3;
+      stroke-dashoffset: 339.3;
+      transition: stroke-dashoffset 1.4s cubic-bezier(0.22, 1, 0.36, 1), stroke 0.3s;
+    }
+    .gauge-svg .fill.amber { stroke: var(--amber); }
+    .gauge-svg .fill.green { stroke: var(--green); }
+    .gauge-circle-inner {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+    .gauge-score {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .gauge-label { font-size: 0.75rem; color: var(--text-muted); }
+    .ai-analysis {
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      min-height: 140px;
+    }
+    .ai-analysis .label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--teal);
+      margin-bottom: 0.75rem;
+    }
+    .ai-analysis .content {
+      font-size: 0.9375rem;
+      line-height: 1.7;
+      color: var(--text-muted);
+    }
+    .ai-analysis .cursor { display: inline-block; width: 2px; height: 1em; background: var(--teal); animation: blink 0.8s step-end infinite; vertical-align: text-bottom; }
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+    .report-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .metric-card {
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      text-align: center;
+    }
+    .metric-card .value { font-size: 1.5rem; font-weight: 700; }
+    .metric-card .value.green { color: var(--green); }
+    .metric-card .value.amber { color: var(--amber); }
+    .metric-card .value.red { color: var(--red); }
+    .metric-card .label { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem; }
+    .status-banner {
+      padding: 1.25rem 1.5rem;
+      border-radius: var(--radius);
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      font-weight: 600;
+      font-size: 1.0625rem;
+    }
+    .status-banner.hold {
+      background: rgba(255, 68, 68, 0.15);
+      border: 1px solid rgba(255, 68, 68, 0.4);
+      color: var(--red);
+    }
+    .status-banner .icon { font-size: 1.5rem; }
+    .discharge-cert {
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+      text-align: center;
+      opacity: 0.6;
+      position: relative;
+    }
+    .discharge-cert .lock {
+      font-size: 2rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+    .discharge-cert .title { font-size: 1rem; font-weight: 600; color: var(--text-muted); }
+    .discharge-cert .sub { font-size: 0.8125rem; color: var(--text-muted); margin-top: 0.25rem; }
+    .report-screen .btn { margin-top: 1.5rem; }
+
+    /* ========== DASHBOARD ========== */
+    .dashboard-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border-glass);
+    }
+    .dashboard-header .hospital { font-size: 1.125rem; font-weight: 600; color: var(--text); }
+    .dashboard-header .ward { font-size: 0.875rem; color: var(--teal); }
+    .dashboard-header .clock { font-size: 1.25rem; font-weight: 600; color: var(--text); letter-spacing: 0.05em; }
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1.25rem;
+    }
+    .patient-card {
+      background: var(--bg-glass);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 1.5rem;
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+    }
+    .patient-card:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-glow);
+    }
+    .patient-card.cleared { border-left: 4px solid var(--green); }
+    .patient-card.borderline { border-left: 4px solid var(--amber); }
+    .patient-card.flagged { border-left: 4px solid var(--red); }
+    .patient-card.pending { border-left: 4px solid var(--text-muted); opacity: 0.85; }
+    .patient-card .name { font-weight: 600; font-size: 1rem; margin-bottom: 0.25rem; }
+    .patient-card .meta { font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .patient-card .score-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .patient-card .score { font-size: 1.5rem; font-weight: 700; }
+    .patient-card .score.green { color: var(--green); }
+    .patient-card .score.amber { color: var(--amber); }
+    .patient-card .score.red { color: var(--red); }
+    .patient-card .score.muted { color: var(--text-muted); }
+    .patient-card .badge {
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.25rem 0.5rem;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+    .patient-card .badge.cleared { background: rgba(0, 255, 136, 0.2); color: var(--green); }
+    .patient-card .badge.borderline { background: rgba(255, 184, 0, 0.2); color: var(--amber); }
+    .patient-card .badge.flagged { background: rgba(255, 68, 68, 0.2); color: var(--red); }
+    .patient-card .badge.pending { background: rgba(255,255,255,0.08); color: var(--text-muted); }
+    .dashboard-footer { margin-top: 2rem; text-align: center; }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+      transition: color 0.2s;
+    }
+    .back-link:hover { color: var(--teal); }
+
+    @media (max-width: 640px) {
+      .screen { padding: 1rem; }
+      .landing { padding: 2rem 1rem; }
+      .landing-ctas { flex-direction: column; width: 100%; max-width: 280px; }
+      .landing-ctas .btn { width: 100%; }
+      .progress-steps { flex-wrap: wrap; justify-content: center; gap: 0.25rem; }
+      .progress-connector { width: 20px; }
+      .glass-card { padding: 1.25rem; }
+      .dashboard-header { flex-direction: column; align-items: flex-start; }
+      .dashboard-grid { grid-template-columns: 1fr; }
+      .report-metrics { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="aura-bg" aria-hidden="true">
+    <div class="aura-orb"></div>
+    <div class="aura-orb"></div>
+    <div class="aura-orb"></div>
+    <div id="particles"></div>
+  </div>
+
+  <div class="app">
+    <!-- LANDING -->
+    <section id="screen-landing" class="screen active">
+      <div class="landing">
+        <div class="aura-logo" aria-hidden="true">
+          <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="50" cy="50" r="42" stroke="url(#logoGrad)" stroke-width="3" fill="none" opacity="0.6"/>
+            <path d="M50 20 L50 80 M26 50 L74 50 M35 35 L65 65 M65 35 L35 65" stroke="url(#logoGrad)" stroke-width="2" stroke-linecap="round" opacity="0.9"/>
+            <circle cx="50" cy="50" r="8" fill="url(#logoGrad)"/>
+            <defs>
+              <linearGradient id="logoGrad" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#00d4ff"/>
+                <stop offset="1" stop-color="#7c3aed"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <h1>AURA</h1>
+        <p class="tagline">Not just awake. Certified ready.</p>
+        <div class="heartbeat-line"></div>
+        <div class="landing-ctas">
+          <button type="button" class="btn btn-primary" data-go="intake" data-flow="preop">Begin Pre-Op Baseline</button>
+          <button type="button" class="btn btn-secondary" data-go="intake" data-flow="postop">Begin Post-Op Assessment</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- INTAKE -->
+    <section id="screen-intake" class="screen">
+      <a href="#" class="back-link" data-go="landing">← Back</a>
+      <div class="progress-steps">
+        <div class="progress-step active"><span class="dot"></span> Intake</div>
+        <div class="progress-connector"></div>
+        <div class="progress-step"><span class="dot"></span> Assessment</div>
+        <div class="progress-connector"></div>
+        <div class="progress-step"><span class="dot"></span> Report</div>
+      </div>
+      <div class="glass-card intake-form">
+        <h2 style="margin-bottom:1.5rem; font-size:1.25rem;">Patient Intake</h2>
+        <form id="form-intake">
+          <div class="form-group">
+            <label>Patient name</label>
+            <input type="text" placeholder="e.g. Jane Doe" required />
+          </div>
+          <div class="form-group">
+            <label>Patient ID</label>
+            <input type="text" placeholder="e.g. MRN-88492" required />
+          </div>
+          <div class="form-group">
+            <label>Procedure type</label>
+            <select required>
+              <option value="">Select procedure</option>
+              <option>General anesthesia — Laparoscopic</option>
+              <option>General anesthesia — Open</option>
+              <option>Regional — Spinal</option>
+              <option>Sedation — Moderate</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Surgeon name</label>
+            <input type="text" placeholder="e.g. Dr. Sarah Chen" required />
+          </div>
+          <div class="form-group">
+            <label>Date</label>
+            <input type="date" required />
+          </div>
+          <button type="submit" class="btn btn-primary" id="intake-submit">Continue to Assessment</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- PRE-OP BASELINE -->
+    <section id="screen-preop" class="screen">
+      <a href="#" class="back-link" data-go="intake">← Back</a>
+      <div class="progress-steps">
+        <div class="progress-step done"><span class="dot"></span> Intake</div>
+        <div class="progress-connector done"></div>
+        <div class="progress-step active"><span class="dot"></span> Assessment</div>
+        <div class="progress-connector"></div>
+        <div class="progress-step"><span class="dot"></span> Report</div>
+      </div>
+      <div class="assessment-screen">
+        <h2>Pre-Op Baseline</h2>
+        <p class="assessment-instruction">Follow the prompts to establish a baseline. Take your time and perform each test as directed.</p>
+        <div class="test-modules">
+          <div class="test-card">
+            <h3><span class="icon">◆</span> Ocular Test</h3>
+            <div class="ocular-canvas-wrap" id="ocular-preop">
+              <div class="ocular-dot" id="dot-preop"></div>
+            </div>
+            <div class="progress-ring-wrap">
+              <div class="progress-ring" style="background: conic-gradient(var(--teal) 94%, var(--border-glass) 0);"><div class="progress-ring-inner">94%</div></div>
+              <button type="button" class="btn btn-secondary" id="btn-ocular-preop">Begin Tracking</button>
+            </div>
+          </div>
+          <div class="test-card">
+            <h3><span class="icon">▸</span> Vocal Test</h3>
+            <p class="vocal-phrase">"The morning light filters through the window slowly."</p>
+            <div class="sound-wave" id="wave-preop">
+              <span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span>
+              <span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span>
+            </div>
+            <button type="button" class="record-btn" id="record-preop" aria-pressed="false"><span class="dot"></span> Record response</button>
+          </div>
+        </div>
+        <div class="baseline-score-card" id="score-preop">
+          <div class="score-big">94</div>
+          <div class="label">/ 100 — Baseline established</div>
+          <div class="status-row">
+            <span><span class="status-dot"></span> Ocular nominal</span>
+            <span><span class="status-dot"></span> Vocal nominal</span>
+            <span><span class="status-dot"></span> CNS nominal</span>
+          </div>
+        </div>
+        <div class="nav-buttons">
+          <button type="button" class="btn btn-primary" data-go="landing">Done — Return home</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- POST-OP ASSESSMENT -->
+    <section id="screen-postop" class="screen">
+      <a href="#" class="back-link" data-go="intake">← Back</a>
+      <div class="progress-steps">
+        <div class="progress-step done"><span class="dot"></span> Intake</div>
+        <div class="progress-connector done"></div>
+        <div class="progress-step active"><span class="dot"></span> Assessment</div>
+        <div class="progress-connector"></div>
+        <div class="progress-step"><span class="dot"></span> Report</div>
+      </div>
+      <div class="assessment-screen">
+        <h2>Post-Op Assessment</h2>
+        <p class="assessment-instruction">Repeat the same tests to compare against your baseline. Results will be analyzed automatically.</p>
+        <div class="test-modules">
+          <div class="test-card">
+            <h3><span class="icon">◆</span> Ocular Test</h3>
+            <div class="ocular-canvas-wrap" id="ocular-postop">
+              <div class="ocular-dot postop" id="dot-postop"></div>
+            </div>
+            <div class="progress-ring-wrap">
+              <div class="progress-ring" style="background: conic-gradient(var(--amber) 61%, var(--border-glass) 0);"><div class="progress-ring-inner">61%</div></div>
+              <button type="button" class="btn btn-secondary" id="btn-ocular-postop">Begin Tracking</button>
+            </div>
+          </div>
+          <div class="test-card">
+            <h3><span class="icon">▸</span> Vocal Test</h3>
+            <p class="vocal-phrase">"The morning light filters through the window slowly."</p>
+            <div class="sound-wave postop" id="wave-postop">
+              <span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span>
+              <span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span><span class="sound-bar"></span>
+            </div>
+            <button type="button" class="record-btn recording" id="record-postop"><span class="dot"></span> Recording...</button>
+          </div>
+        </div>
+        <div class="baseline-score-card postop" id="score-postop">
+          <div class="score-big">61</div>
+          <div class="label">/ 100 — Below baseline</div>
+          <div class="status-row">
+            <span><span class="status-dot amber"></span> Ocular degraded</span>
+            <span><span class="status-dot amber"></span> Vocal tremor</span>
+            <span><span class="status-dot red"></span> CNS — hold</span>
+          </div>
+        </div>
+        <div class="nav-buttons">
+          <button type="button" class="btn btn-primary" data-go="report">View Readiness Report</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- AURA READINESS REPORT -->
+    <section id="screen-report" class="screen">
+      <a href="#" class="back-link" data-go="postop">← Back to assessment</a>
+      <div class="report-screen">
+        <h2>AURA Readiness Report</h2>
+        <div class="gauge-wrap">
+          <svg class="gauge-svg" viewBox="0 0 120 120">
+            <circle class="track" cx="60" cy="60" r="54"/>
+            <circle class="fill" id="gauge-fill" cx="60" cy="60" r="54"/>
+          </svg>
+          <div class="gauge-circle-inner">
+            <span class="gauge-score" id="gauge-number">0</span>
+            <span class="gauge-label">Readiness score</span>
+          </div>
+        </div>
+        <div class="ai-analysis">
+          <div class="label">AI Analysis</div>
+          <div class="content" id="ai-text"></div>
+        </div>
+        <div class="report-metrics">
+          <div class="metric-card"><div class="value amber">58</div><div class="label">Ocular Score</div></div>
+          <div class="metric-card"><div class="value amber">64</div><div class="label">Vocal Score</div></div>
+          <div class="metric-card"><div class="value red">61</div><div class="label">CNS Readiness Index</div></div>
+        </div>
+        <div class="status-banner hold">
+          <span class="icon">⚠</span>
+          <span>HOLD — Further Observation Required</span>
+        </div>
+        <div class="discharge-cert">
+          <div class="lock">🔒</div>
+          <div class="title">Discharge Certificate</div>
+          <div class="sub">Available when AURA score meets clearance threshold</div>
+        </div>
+        <div style="text-align:center;">
+          <button type="button" class="btn btn-secondary" data-go="dashboard">Open Clinician Dashboard</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- CLINICIAN DASHBOARD -->
+    <section id="screen-dashboard" class="screen">
+      <div class="dashboard-header">
+        <div>
+          <div class="hospital">Northgate General — PACU</div>
+          <div class="ward">Ward 4 · Recovery</div>
+        </div>
+        <div class="clock" id="live-clock">00:00:00</div>
+      </div>
+      <div class="dashboard-grid" id="dashboard-grid"></div>
+      <div class="dashboard-footer">
+        <button type="button" class="btn btn-secondary" data-go="landing">Exit to AURA Home</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      const AI_ANALYSIS = "Patient shows 34% degradation in saccadic response velocity and elevated vocal tremor index of 2.3σ above baseline. Recommend minimum 90-minute supervised observation before reassessment. Findings consistent with residual GABAergic anesthesia effects on brainstem motor pathways.";
+
+      const PATIENTS = [
+        { name: "Jane Doe", procedure: "Laparoscopic cholecystectomy", time: "2h 14m", score: 92, status: "cleared" },
+        { name: "Marcus Webb", procedure: "Knee arthroscopy", time: "1h 48m", score: 88, status: "cleared" },
+        { name: "Elena Vasquez", procedure: "General — Appendectomy", time: "45m", score: 67, status: "borderline" },
+        { name: "James Liu", procedure: "Spinal fusion", time: "1h 02m", score: 54, status: "flagged" },
+        { name: "Sarah Kim", procedure: "Cataract repair", time: "—", score: null, status: "pending" },
+        { name: "David Brown", procedure: "Hernia repair", time: "—", score: null, status: "pending" },
+      ];
+
+      // Particles
+      const particlesEl = document.getElementById('particles');
+      for (let i = 0; i < 40; i++) {
+        const p = document.createElement('div');
+        p.className = 'particle';
+        p.style.left = Math.random() * 100 + '%';
+        p.style.animationDelay = Math.random() * 20 + 's';
+        p.style.animationDuration = (15 + Math.random() * 10) + 's';
+        particlesEl.appendChild(p);
+      }
+
+      // Navigation
+      function go(screenId) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        const el = document.getElementById('screen-' + screenId);
+        if (el) el.classList.add('active');
+        if (screenId === 'report') {
+          document.getElementById('ai-text').innerHTML = '';
+          document.getElementById('gauge-number').textContent = '0';
+          document.getElementById('gauge-number').style.color = '';
+          var gf = document.getElementById('gauge-fill');
+          if (gf) { gf.style.strokeDashoffset = '339.3'; gf.classList.remove('green','amber','red'); gf.setAttribute('stroke', 'var(--red)'); }
+          runGauge();
+          runTyping();
+        }
+        if (screenId === 'dashboard') {
+          renderDashboard();
+          startClock();
+        }
+      }
+
+      document.querySelectorAll('[data-go]').forEach(el => {
+        el.addEventListener('click', function (e) {
+          e.preventDefault();
+          const target = this.getAttribute('data-go');
+          const flow = this.getAttribute('data-flow');
+          if (target) go(target);
+          if (flow === 'preop' && target === 'intake') sessionStorage.setItem('aura_flow', 'preop');
+          if (flow === 'postop' && target === 'intake') sessionStorage.setItem('aura_flow', 'postop');
+        });
+      });
+
+      document.getElementById('form-intake').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const flow = sessionStorage.getItem('aura_flow') || 'preop';
+        go(flow === 'postop' ? 'postop' : 'preop');
+      });
+
+      // Ocular figure-8 (preop)
+      const ocularPreop = document.getElementById('dot-preop');
+      const wrapPreop = document.getElementById('ocular-preop');
+      let animId = null;
+      let t = 0;
+      function figure8() {
+        if (!wrapPreop || !wrapPreop.offsetParent) return;
+        const w = wrapPreop.offsetWidth, h = wrapPreop.offsetHeight;
+        const cx = w / 2, cy = h / 2;
+        const scale = Math.min(w, h) * 0.35;
+        const x = cx + scale * Math.sin(t);
+        const y = cy + scale * Math.sin(t * 2) * 0.5;
+        if (ocularPreop) {
+          ocularPreop.style.left = x + 'px';
+          ocularPreop.style.top = y + 'px';
+          ocularPreop.style.transform = 'translate(-50%, -50%)';
+        }
+        t += 0.03;
+        animId = requestAnimationFrame(figure8);
+      }
+      document.getElementById('btn-ocular-preop').addEventListener('click', function () {
+        if (animId) { cancelAnimationFrame(animId); animId = null; this.textContent = 'Begin Tracking'; return; }
+        this.textContent = 'Stop';
+        figure8();
+      });
+      document.getElementById('record-preop').addEventListener('click', function () {
+        this.classList.toggle('recording');
+        this.setAttribute('aria-pressed', this.classList.contains('recording'));
+        this.innerHTML = this.classList.contains('recording') ? '<span class="dot"></span> Recording...' : '<span class="dot"></span> Record response';
+      });
+
+      // Report: gauge 0 → 61 (circle circumference ≈ 2*π*54 ≈ 339.3)
+      function runGauge() {
+        const el = document.getElementById('gauge-number');
+        const fillEl = document.getElementById('gauge-fill');
+        if (!el || !fillEl) return;
+        const circumference = 2 * Math.PI * 54;
+        const target = 61;
+        const duration = 1500;
+        const start = performance.now();
+        function tick(now) {
+          const elapsed = now - start;
+          const p = Math.min(elapsed / duration, 1);
+          const ease = 1 - Math.pow(1 - p, 2);
+          const v = Math.round(ease * target);
+          el.textContent = v;
+          const offset = circumference - (circumference * v) / 100;
+          fillEl.style.strokeDashoffset = offset;
+          fillEl.style.color = v >= 80 ? 'var(--green)' : v >= 60 ? 'var(--amber)' : 'var(--red)';
+          fillEl.classList.toggle('green', v >= 80);
+          fillEl.classList.toggle('amber', v >= 60 && v < 80);
+          fillEl.classList.toggle('red', v < 60);
+          if (v < 80) fillEl.setAttribute('stroke', v >= 60 ? 'var(--amber)' : 'var(--red)');
+          else fillEl.setAttribute('stroke', 'var(--green)');
+          if (p < 1) requestAnimationFrame(tick);
+        }
+        fillEl.style.strokeDashoffset = circumference;
+        requestAnimationFrame(tick);
+      }
+
+      // Report: typing effect
+      function runTyping() {
+        const el = document.getElementById('ai-text');
+        if (!el) return;
+        el.innerHTML = '';
+        let i = 0;
+        function type() {
+          if (i < AI_ANALYSIS.length) {
+            el.appendChild(document.createTextNode(AI_ANALYSIS[i]));
+            i++;
+            setTimeout(type, 18);
+          } else {
+            const cursor = document.createElement('span');
+            cursor.className = 'cursor';
+            el.appendChild(cursor);
+          }
+        }
+        setTimeout(type, 600);
+      }
+
+      // Dashboard
+      function renderDashboard() {
+        const grid = document.getElementById('dashboard-grid');
+        if (!grid) return;
+        grid.innerHTML = PATIENTS.map(p => `
+          <div class="patient-card ${p.status}">
+            <div class="name">${p.name}</div>
+            <div class="meta">${p.procedure} · ${p.time} since surgery</div>
+            <div class="score-row">
+              <span class="score ${p.score != null ? (p.score >= 80 ? 'green' : p.score >= 60 ? 'amber' : 'red') : 'muted'}">${p.score != null ? p.score : '—'}</span>
+              <span class="badge ${p.status}">${p.status === 'cleared' ? 'Cleared' : p.status === 'borderline' ? 'Monitor' : p.status === 'flagged' ? 'Hold' : 'Awaiting'}</span>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      function startClock() {
+        const el = document.getElementById('live-clock');
+        if (!el) return;
+        function update() {
+          const d = new Date();
+          el.textContent = d.toTimeString().slice(0, 8);
+        }
+        update();
+        setInterval(update, 1000);
+      }
+    })();
+  </script>
+</body>
+</html>

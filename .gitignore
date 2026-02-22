@@ -1,0 +1,154 @@
+# Dependencies
+node_modules/
+vendor/
+bower_components/
+jspm_packages/
+
+# Build / output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.class
+*.jar
+*.war
+*.ear
+*.pyc
+__pycache__/
+*.egg-info/
+*.egg
+.eggs/
+*.py[cod]
+*$py.class
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.installed.cfg
+*.manifest
+*.spec
+
+# Virtual envs / runtimes
+venv/
+.venv/
+env/
+.env/
+*.virtualenv
+.python-version
+target/                    # Rust, Scala, Maven
+Cargo.lock
+*.rs.bk
+.rustup/
+.gradle/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+
+# Env and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+.secrets
+*.p12
+*.pfx
+
+# Logs and cache
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.cache
+.parcel-cache
+.vite
+.turbo
+.eslintcache
+.stylelintcache
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+*.cover
+.hypothesis/
+*.lcov
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Docker
+.docker/
+*.log
+
+# Databases / local data
+*.sqlite
+*.sqlite3
+*.db
+*.sql
+data/
+*.sql.backup
+
+# Misc tooling
+.tool-versions
+.cursor/
+*.bak
+*.tmp
+*.temp
+.temp/
+tmp/
+temp/
+
+# Optional / testing
+coverage/
+.nyc_output/
+*.lcov
+.jest/
+playwright-report/
+test-results/
+playwright/.cache/
+
+# Lock files (optional: some teams commit these)
+# package-lock.json
+# yarn.lock
+# Pipfile.lock
+# poetry.lock
