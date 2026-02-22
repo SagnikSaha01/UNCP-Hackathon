@@ -27,13 +27,16 @@ router = APIRouter()
 
 def call_eleven_labs(
     text: str,
-    voice_id: str = "21m00Tcm4TlvDq8ikWAM",
-    model_id: str = "eleven_flash_v2_5",
-    stability: float | None = None,
+    voice_id: str = "1NThU4PKZ475tX1Ubtfy",
+    model_id: str = "eleven_multilingual_v2",
+    stability: float | None = 0.4,
+    similarity_boost: float | None = 0.75,
     **kwargs,
 ) -> bytes:
     """
     Call Eleven Labs text-to-speech API. Uses ELEVENLABS_API_KEY from .env.
+    Lower stability = more expressive; higher = more monotone. similarity_boost
+    keeps the voice closer to the original (website preview) sound.
     """
     client = ElevenLabs(api_key=_get_api_key())
     opts: dict = {
@@ -43,8 +46,13 @@ def call_eleven_labs(
         "output_format": "mp3_44100_128",
         **kwargs,
     }
+    voice_settings: dict = {}
     if stability is not None:
-        opts["voice_settings"] = {"stability": stability}
+        voice_settings["stability"] = stability
+    if similarity_boost is not None:
+        voice_settings["similarity_boost"] = similarity_boost
+    if voice_settings:
+        opts["voice_settings"] = voice_settings
     result = client.text_to_speech.convert(**opts)
     if hasattr(result, "read"):
         return result.read()
@@ -72,7 +80,7 @@ async def generate_voice(request: SpeechRequest):
         audio_data = call_eleven_labs(
             text=request.text,
             voice_id=request.voice_id,
-            model_id="eleven_flash_v2_5" # Low-latency for bedside apps
+            model_id="eleven_multilingual_v2",  # more natural; use eleven_flash_v2_5 for lower latency
         )
 
         # 3. Return as a Streaming/Binary response
@@ -117,13 +125,13 @@ async def get_instructions(type: str = Query(..., description="The key of the in
         raise HTTPException(status_code=404, detail="Instruction type not found")
 
     try:
-        # 2. Call the ElevenLabs service
-        # Using a slightly higher 'stability' for instructions to sound more authoritative/clear
+        # 2. Call the ElevenLabs service (stability ~0.4 = more expressive, closer to website preview)
         audio_data = call_eleven_labs(
             text=text,
-            voice_id="21m00Tcm4TlvDq8ikWAM", # Keeping the same 'Nurse' voice for consistency
-            stability=0.8,
-            model_id="eleven_flash_v2_5"
+            voice_id="21m00Tcm4TlvDq8ikWAM",
+            stability=0.4,
+            similarity_boost=0.75,
+            model_id="eleven_multilingual_v2",
         )
 
         return Response(content=audio_data, media_type="audio/mpeg")
