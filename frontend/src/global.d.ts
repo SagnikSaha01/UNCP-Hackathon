@@ -24,3 +24,7 @@ export interface FaceMeshResults {
   image: HTMLVideoElement | HTMLImageElement;
   multiFaceLandmarks?: Array<Array<{ x: number; y: number; z?: number }>>;
 }
+
+declare module "motion/react" {
+  export const motion: any;
+}

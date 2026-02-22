@@ -104,8 +104,8 @@ def get_db() -> AsyncIOMotorDatabase:
 # Collection helpers
 # ---------------------------------------------------------------------------
 
-def _patients():
-    return get_db()["patients"]
+def _users():
+    return get_db()["users"]
 
 
 def _sessions():
@@ -142,10 +142,27 @@ async def create_patient(
     assigned_physician_id: str | None = None,
 ) -> dict[str, Any]:
     """
-    Insert a new patient document.
+    Update user document with patient profile fields.
     `baseline` starts as None — it is set permanently the first time
     a completed session is saved for this patient.
     """
+    # Find an existing user by name to update, or create a standalone entry
+    user = await _users().find_one({"name": name})
+    if user:
+        await _users().update_one(
+            {"_id": user["_id"]},
+            {"$set": {
+                "age": age,
+                "surgery_type": surgery_type,
+                "surgery_date": surgery_date,
+                "medications": medications or [],
+                "conditions": conditions or [],
+                "assigned_physician_id": assigned_physician_id,
+            }},
+        )
+        updated = await _users().find_one({"_id": user["_id"]})
+        return _strip_id(updated)
+    # Fallback: insert into users collection directly
     doc = {
         "_id": _new_id(),
         "patient_id": _new_id(),
@@ -156,17 +173,15 @@ async def create_patient(
         "medications": medications or [],
         "conditions": conditions or [],
         "assigned_physician_id": assigned_physician_id,
-        # Permanently set from the first session's averaged metrics.
-        # Never overwritten after that.
         "baseline": None,
         "created_at": _now_iso(),
     }
-    await _patients().insert_one(doc)
+    await _users().insert_one(doc)
     return _strip_id(doc)
 
 
 async def get_patient(patient_id: str) -> dict[str, Any] | None:
-    doc = await _patients().find_one({"patient_id": patient_id})
+    doc = await _users().find_one({"patient_id": patient_id})
     return _strip_id(doc) if doc else None
 
 
@@ -176,15 +191,18 @@ async def list_patients(physician_id: str | None = None) -> list[dict[str, Any]]
     Each patient document is enriched with their latest session summary so the
     physician dashboard can show scores without a second query.
     """
-    query: dict[str, Any] = {}
+    query: dict[str, Any] = {"patient_id": {"$exists": True}}
     if physician_id:
         query["assigned_physician_id"] = physician_id
 
     patients = []
-    async for doc in _patients().find(query).sort("created_at", -1):
+    async for doc in _users().find(query).sort("created_at", -1):
         p = _strip_id(doc)
+        pid = p.get("patient_id")
+        if not pid:
+            continue
         latest = await _sessions().find_one(
-            {"patient_id": p["patient_id"], "completed": True},
+            {"patient_id": pid, "completed": True},
             sort=[("session_number", -1)],
         )
         if latest:
@@ -207,12 +225,12 @@ async def _set_patient_baseline(
     baseline_metrics: dict[str, Any],
 ) -> None:
     """
-    Write the baseline onto the patient document.
+    Write the baseline onto the user document (identified by patient_id).
     Called exactly once — only when session_number == 1.
     Uses $set with a guard so a race condition can never overwrite an
     already-set baseline.
     """
-    await _patients().update_one(
+    await _users().update_one(
         {"patient_id": patient_id, "baseline": None},
         {"$set": {"baseline": baseline_metrics}},
     )
@@ -258,8 +276,8 @@ async def create_session(
     )
     session_number = (last["session_number"] + 1) if last else 1
 
-    # Fetch the patient to get the stored baseline
-    patient = await _patients().find_one({"patient_id": patient_id})
+    # Fetch the user to get the stored baseline
+    patient = await _users().find_one({"patient_id": patient_id})
     stored_baseline = patient.get("baseline") if patient else None
 
     # First session — this time_series average becomes the permanent baseline
@@ -302,6 +320,88 @@ async def create_session(
     }
     await _sessions().insert_one(doc)
     return _strip_id(doc)
+
+
+async def upsert_inline_session(
+    patient_id: str,
+    time_series: list[dict[str, Any]],
+    aura_score: float | None = None,
+    gemini_summary: dict[str, Any] | None = None,
+    solana_tx_hash: str | None = None,
+    solana_explorer_url: str | None = None,
+) -> dict[str, Any]:
+    """
+    Keep a single mutable session document per patient and update it inline.
+
+    If no session exists yet, creates the first session.
+    Otherwise appends incoming readings to the existing session's time_series,
+    enforces sliding window size, and recomputes derived fields in-place.
+    """
+    latest = await _sessions().find_one(
+        {"patient_id": patient_id},
+        sort=[("session_number", -1)],
+    )
+
+    if not latest:
+        return await create_session(
+            patient_id=patient_id,
+            time_series=time_series,
+            aura_score=aura_score,
+            gemini_summary=gemini_summary,
+            solana_tx_hash=solana_tx_hash,
+            solana_explorer_url=solana_explorer_url,
+        )
+
+    existing_series = latest.get("time_series")
+    existing_series = existing_series if isinstance(existing_series, list) else []
+    incoming_series = time_series if isinstance(time_series, list) else []
+    windowed_series = (existing_series + incoming_series)[-TIME_SERIES_MAX_READINGS:]
+
+    session_avg = _average_metrics(windowed_series)
+    patient = await _users().find_one({"patient_id": patient_id})
+    stored_baseline = patient.get("baseline") if patient else None
+
+    if stored_baseline is None:
+        await _set_patient_baseline(patient_id, session_avg)
+        baseline_used = session_avg
+        derived_metrics = {
+            "note": "baseline_session",
+            "prior_session_number": None,
+            "deltas_vs_baseline": None,
+        }
+    else:
+        baseline_used = stored_baseline
+        derived_metrics = {
+            "prior_session_number": latest.get("session_number"),
+            "deltas_vs_baseline": _compute_deltas_vs_baseline(
+                session_avg, stored_baseline
+            ),
+        }
+
+    update_fields: dict[str, Any] = {
+        "timestamp": _now_iso(),
+        "time_series": windowed_series,
+        "session_averages": session_avg,
+        "baseline_snapshot": baseline_used,
+        "derived_metrics": derived_metrics,
+        "completed": True,
+    }
+
+    if aura_score is not None:
+        update_fields["aura_score"] = aura_score
+    if gemini_summary is not None:
+        update_fields["gemini_summary"] = gemini_summary
+    if solana_tx_hash is not None:
+        update_fields["solana_tx_hash"] = solana_tx_hash
+    if solana_explorer_url is not None:
+        update_fields["solana_explorer_url"] = solana_explorer_url
+
+    await _sessions().update_one(
+        {"session_id": latest["session_id"]},
+        {"$set": update_fields},
+    )
+    updated = await _sessions().find_one({"session_id": latest["session_id"]})
+    return _strip_id(updated) if updated else {}
 
 
 async def add_reading_to_session(
@@ -406,18 +506,22 @@ async def create_patient_route(body: dict):
 async def get_patient_route(patient_id: str):
     patient = await get_patient(patient_id)
     if not patient:
-        raise HTTPException(status_code=404, detail="Patient not found")
+        raise HTTPException(status_code=404, detail="Patient not found in users collection")
     return patient
 
 
 @router.post("/session")
 async def create_session_route(body: dict):
-    if "time_series" not in body or not isinstance(body["time_series"], list):
+    if (
+        "time_series" not in body
+        or not isinstance(body["time_series"], list)
+        or len(body["time_series"]) == 0
+    ):
         raise HTTPException(
             status_code=422,
             detail="'time_series' must be a non-empty list of metric readings.",
         )
-    return await create_session(
+    return await upsert_inline_session(
         patient_id=body["patient_id"],
         time_series=body["time_series"],
         aura_score=body.get("aura_score"),
@@ -436,6 +540,52 @@ async def get_sessions_route(patient_id: str):
 async def get_longitudinal_route(patient_id: str):
     sessions = await get_sessions_for_patient(patient_id)
     return build_longitudinal_summary(sessions)
+
+
+@router.delete("/patients/{patient_id}/reset")
+async def reset_patient_baseline_route(patient_id: str):
+    """
+    Reset a patient's baseline and delete ALL their session data.
+    This is the only way to re-establish a baseline (e.g. for a new surgery/treatment).
+    After this call the patient document has baseline=null and no sessions exist,
+    so the next completed session will become the new permanent baseline.
+    """
+    user = await _users().find_one({"patient_id": patient_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="Patient not found in users collection")
+
+    # Delete all sessions for this patient
+    delete_result = await _sessions().delete_many({"patient_id": patient_id})
+
+    # Reset baseline to null on the user document
+    await _users().update_one(
+        {"patient_id": patient_id},
+        {"$set": {"baseline": None, "baseline_reset_at": _now_iso()}},
+    )
+
+    return {
+        "ok": True,
+        "sessions_deleted": delete_result.deleted_count,
+        "message": "Baseline and all session data have been reset. The next completed session will become the new baseline.",
+    }
+
+
+@router.get("/patients/{patient_id}/baseline-status")
+async def get_baseline_status_route(patient_id: str):
+    """Return whether a patient has a baseline recorded and how many sessions they have."""
+    user = await _users().find_one({"patient_id": patient_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="Patient not found in users collection")
+
+    session_count = await _sessions().count_documents(
+        {"patient_id": patient_id, "completed": True}
+    )
+
+    return {
+        "has_baseline": user.get("baseline") is not None,
+        "session_count": session_count,
+        "baseline_reset_at": user.get("baseline_reset_at"),
+    }
 
 
 @router.get("/fetch-input/{patient_id}")
@@ -507,7 +657,7 @@ async def assign_patient_to_physician(
         {"physician_id": physician_id},
         {"$addToSet": {"assigned_patient_ids": patient_id}},
     )
-    await _patients().update_one(
+    await _users().update_one(
         {"patient_id": patient_id},
         {"$set": {"assigned_physician_id": physician_id}},
     )

@@ -1,34 +1,61 @@
 import { useNavigate } from "react-router";
-import { Mic, Play, Volume2, ArrowRight } from "lucide-react";
-import { useState } from "react";
+import { Mic, Play, Volume2, ArrowRight, Loader2 } from "lucide-react";
+import { useCallback, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { VoiceAssistantButton } from "../components/voice-assistant-button";
 import { motion } from "motion/react";
+import { useAuth } from "../context/auth-context";
+import { runGeminiAnalysisForPatient, type GeminiSummary } from "../lib/gemini-analysis";
 
 export function VoiceTestScreen() {
   const navigate = useNavigate();
+  const { getCurrentPatientId } = useAuth();
   const [isRecording, setIsRecording] = useState(false);
   const [hasRecorded, setHasRecorded] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [geminiError, setGeminiError] = useState<string | null>(null);
+  const [geminiSummary, setGeminiSummary] = useState<GeminiSummary | null>(null);
 
   const testSentence = "Today is a calm and steady day.";
+
+  const generateGeminiSummary = useCallback(async () => {
+    const patientId = await getCurrentPatientId();
+    if (!patientId) {
+      setGeminiError("Could not resolve patient context for AI analysis.");
+      return;
+    }
+
+    setIsGenerating(true);
+    setGeminiError(null);
+    try {
+      const summary = await runGeminiAnalysisForPatient(patientId);
+      setGeminiSummary(summary);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI summary generation failed. You can continue and retry after next test.";
+      setGeminiError(message);
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [getCurrentPatientId]);
 
   const handleRecord = () => {
     if (!isRecording) {
       setIsRecording(true);
       setHasRecorded(false);
+      setGeminiSummary(null);
+      setGeminiError(null);
       // Simulate recording for 5 seconds
       setTimeout(() => {
         setIsRecording(false);
         setHasRecorded(true);
+        void generateGeminiSummary();
       }, 5000);
     }
   };
 
   const handleContinue = () => {
-    // Determine if results should go to emergency or normal results
-    const isHighRisk = Math.random() > 0.7; // 30% chance for demo
-    navigate(isHighRisk ? "/emergency" : "/results");
+    navigate("/results");
   };
 
   const transcript = `Step 2: Short Voice Check. Please read the sentence displayed on screen slowly and clearly. Press the microphone button when you're ready to record. After recording, you can replay it or continue to your results.`;
@@ -112,8 +139,25 @@ export function VoiceTestScreen() {
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex gap-3"
+            className="space-y-3"
           >
+            <Card className="p-4 bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl">
+              {isGenerating && (
+                <div className="flex items-center gap-2 text-sm text-white/80">
+                  <Loader2 className="h-4 w-4 animate-spin text-[#00d4ff]" />
+                  Generating Gemini summary from latest test data...
+                </div>
+              )}
+              {!isGenerating && geminiError && (
+                <p className="text-sm text-amber-300">{geminiError}</p>
+              )}
+              {!isGenerating && !geminiError && geminiSummary && (
+                <p className="text-sm text-white/80">
+                  AI summary ready: {geminiSummary.risk_level ?? "inconclusive"} risk, {typeof geminiSummary.confidence_score === "number" ? `${Math.round(geminiSummary.confidence_score * 100)}% confidence` : "confidence unavailable"}.
+                </p>
+              )}
+            </Card>
+            <div className="flex gap-3">
             <Button
               onClick={() => setHasRecorded(false)}
               variant="outline"
@@ -124,11 +168,13 @@ export function VoiceTestScreen() {
             </Button>
             <Button
               onClick={handleContinue}
+              disabled={isGenerating}
               className="flex-1 h-12 bg-gradient-to-r from-[#00d4ff] to-[#7c3aed] hover:opacity-90 text-white text-sm font-semibold rounded-xl shadow-lg shadow-[#00d4ff]/20"
             >
-              Continue
+              {isGenerating ? "Generating Summary..." : "Continue"}
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
+            </div>
           </motion.div>
         )}
 

@@ -1,6 +1,6 @@
 import React from "react";
-import { useNavigate } from "react-router";
-import { X } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router";
+import { Loader2, X } from "lucide-react";
 import {
   useRef,
   useState,
@@ -10,6 +10,9 @@ import {
 import { Button } from "../components/ui/button";
 import { VoiceAssistantButton } from "../components/voice-assistant-button";
 import type { FaceMeshResults } from "../../global";
+import { useAuth } from "../context/auth-context";
+import { buildApiUrl } from "../config/api";
+import { runGeminiAnalysisForPatient, type GeminiSummary } from "../lib/gemini-analysis";
 
 // --- Ocular test constants (from AURA kinematics) ---
 // VELOCITY_SCALE: iris x moves ~0–1 normalized, dt in ms.
@@ -66,6 +69,9 @@ type ExamPhase = "fixation" | "saccade" | "pursuit" | "flash" | null;
 
 export function EyeTestScreen() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { getCurrentPatientId } = useAuth();
+  const mode = searchParams.get("mode") === "postop" ? "postop" : "baseline";
   const videoRef = useRef<HTMLVideoElement>(null);
   const pipVideoRef = useRef<HTMLVideoElement>(null); // small camera preview
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -141,6 +147,54 @@ export function EyeTestScreen() {
   const [prosaccadeLatency, setProsaccadeLatency] = useState<number | null>(null);
   const [saccadeAccuracy, setSaccadeAccuracy] = useState<number | null>(null);
   const [smoothPursuitGain, setSmoothPursuitGain] = useState<number | null>(null);
+  const [isGeminiLoading, setIsGeminiLoading] = useState(false);
+  const [geminiSummary, setGeminiSummary] = useState<GeminiSummary | null>(null);
+  const [geminiError, setGeminiError] = useState<string | null>(null);
+
+  const persistEyeMetricsToMongo = useCallback(
+    async (reading: {
+      timestamp: string;
+      saccade_velocity: number | null;
+      fixation_stability: number | null;
+      pupil_variability: number | null;
+      smooth_pursuit_gain: number | null;
+      saccade_accuracy: number | null;
+      prosaccade_latency: number | null;
+    }) => {
+      const patientId = await getCurrentPatientId();
+      if (!patientId) return;
+
+      await fetch(buildApiUrl("/session"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patient_id: patientId,
+          time_series: [reading],
+        }),
+      });
+    },
+    [getCurrentPatientId]
+  );
+
+  const generateGeminiSummary = useCallback(async () => {
+    const patientId = await getCurrentPatientId();
+    if (!patientId) {
+      setGeminiError("Could not resolve patient context for AI analysis.");
+      return;
+    }
+
+    setIsGeminiLoading(true);
+    setGeminiError(null);
+    try {
+      const summary = await runGeminiAnalysisForPatient(patientId);
+      setGeminiSummary(summary);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI summary generation failed. You can continue and retry after next test.";
+      setGeminiError(message);
+    } finally {
+      setIsGeminiLoading(false);
+    }
+  }, [getCurrentPatientId]);
 
   function createFaceMesh() {
     if (typeof window === "undefined" || !window.FaceMesh) return null;
@@ -393,6 +447,12 @@ export function EyeTestScreen() {
     saccadeAccuracyRef.current = [];
     pursuitSamplesRef.current = [];
 
+    let fixationStabilityValue: number | null = null;
+    let pupilVariabilityValue: number | null = null;
+    let prosaccadeLatencyValue: number | null = null;
+    let saccadeAccuracyValue: number | null = null;
+    let smoothPursuitGainValue: number | null = null;
+
     examActiveRef.current = true;
 
     // Snapshot test-box screen bounds for gaze coordinate remapping.
@@ -429,9 +489,11 @@ export function EyeTestScreen() {
       const stdX = Math.sqrt(variance(xs));
       const stdY = Math.sqrt(variance(ys));
       const stability = Math.max(0, 1 - (stdX + stdY) * STABILITY_STD_SCALE);
-      setFixationStability(Math.round(stability * 1000) / 1000);
+      fixationStabilityValue = Math.round(stability * 1000) / 1000;
+      setFixationStability(fixationStabilityValue);
     } else {
-      setFixationStability(fix.length > 0 ? 0 : null);
+      fixationStabilityValue = fix.length > 0 ? 0 : null;
+      setFixationStability(fixationStabilityValue);
     }
 
     // --- Phase 1: Saccadic trials ---
@@ -544,8 +606,10 @@ export function EyeTestScreen() {
     }
     if (gains.length > 0) {
       const meanGain = gains.reduce((a, b) => a + b, 0) / gains.length;
-      setSmoothPursuitGain(Math.round(meanGain * 1000) / 1000);
+      smoothPursuitGainValue = Math.round(meanGain * 1000) / 1000;
+      setSmoothPursuitGain(smoothPursuitGainValue);
     } else {
+      smoothPursuitGainValue = null;
       setSmoothPursuitGain(null);
     }
 
@@ -565,19 +629,21 @@ export function EyeTestScreen() {
       // We scale ×1000 to produce values in the range ~0.1–1.0 that are
       // interpretable alongside the other 0–1 metrics.
       const v = variance(irisHist) * 1000;
-      setPupilVariability(Math.round(v * 1000) / 1000);
+      pupilVariabilityValue = Math.round(v * 1000) / 1000;
+      setPupilVariability(pupilVariabilityValue);
     } else {
-      setPupilVariability(irisHist.length > 0 ? 0 : null);
+      pupilVariabilityValue = irisHist.length > 0 ? 0 : null;
+      setPupilVariability(pupilVariabilityValue);
     }
 
     const latencies = prosaccadeLatenciesRef.current;
     if (latencies.length > 0) {
-      setProsaccadeLatency(
-        Math.round(
-          (latencies.reduce((a, b) => a + b, 0) / latencies.length) * 10
-        ) / 10
-      );
+      prosaccadeLatencyValue = Math.round(
+        (latencies.reduce((a, b) => a + b, 0) / latencies.length) * 10
+      ) / 10;
+      setProsaccadeLatency(prosaccadeLatencyValue);
     } else {
+      prosaccadeLatencyValue = null;
       setProsaccadeLatency(null);
     }
 
@@ -608,8 +674,10 @@ export function EyeTestScreen() {
       const medianAbs = absVals[Math.floor(absVals.length / 2)] || 0.001;
       const scores = validPairs.map((v) => Math.max(0, Math.min(1, v / medianAbs)));
       const meanScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-      setSaccadeAccuracy(Math.round(meanScore * 1000) / 1000);
+      saccadeAccuracyValue = Math.round(meanScore * 1000) / 1000;
+      setSaccadeAccuracy(saccadeAccuracyValue);
     } else {
+      saccadeAccuracyValue = null;
       setSaccadeAccuracy(null);
     }
 
@@ -627,9 +695,27 @@ export function EyeTestScreen() {
     );
     setResultHeaderText(isDepressed ? "ABNORMAL" : "NORMAL");
     setStatusText(`Test complete: ${isDepressed ? "ABNORMAL" : "NORMAL"}`);
+
+    try {
+      await persistEyeMetricsToMongo({
+        timestamp: new Date().toISOString(),
+        saccade_velocity: Number(avgPeak.toFixed(4)),
+        fixation_stability: fixationStabilityValue,
+        pupil_variability: pupilVariabilityValue,
+        smooth_pursuit_gain: smoothPursuitGainValue,
+        saccade_accuracy: saccadeAccuracyValue,
+        prosaccade_latency: prosaccadeLatencyValue,
+      });
+    } catch {
+      // Non-blocking: user should still be able to continue exam flow.
+    }
+
+    setGeminiSummary(null);
+    setGeminiError(null);
     setShowResultsModal(true);
     setExamBtnDisabled(false);
-  }, [threshold]);
+    void generateGeminiSummary();
+  }, [threshold, persistEyeMetricsToMongo, generateGeminiSummary]);
 
   const handleDismissResults = () => {
     setShowResultsModal(false);
@@ -637,7 +723,7 @@ export function EyeTestScreen() {
   };
 
   const handleContinue = () => {
-    navigate("/voice-test");
+    navigate("/results");
   };
 
   useEffect(() => {
@@ -871,10 +957,36 @@ export function EyeTestScreen() {
                 </div>
                 <Button
                   onClick={handleContinue}
+                  disabled={isGeminiLoading}
                   className="col-span-2 h-11 rounded-xl font-semibold bg-[#00d4ff] text-[#0a0f1e] hover:opacity-90"
                 >
-                  Continue to Voice Test
+                  {isGeminiLoading ? "Generating AI Summary..." : "Continue to Results"}
                 </Button>
+                <div className="col-span-2 rounded-xl bg-white/5 border border-white/10 p-4 space-y-2">
+                  <p className="text-[10px] text-white/50 uppercase tracking-wider">Gemini summary</p>
+                  {isGeminiLoading && (
+                    <div className="flex items-center gap-2 text-sm text-white/80">
+                      <Loader2 className="h-4 w-4 animate-spin text-[#00d4ff]" />
+                      Analysing...
+                    </div>
+                  )}
+                  {!isGeminiLoading && geminiError && (
+                    <p className="text-sm text-amber-300">{geminiError}</p>
+                  )}
+                  {!isGeminiLoading && !geminiError && geminiSummary && (
+                    <div className="space-y-1 text-xs text-white/80">
+                      <p>
+                        Risk: <span className="text-white">{geminiSummary.risk_level ?? "inconclusive"}</span>
+                      </p>
+                      <p>
+                        Confidence: <span className="text-white">{typeof geminiSummary.confidence_score === "number" ? `${Math.round(geminiSummary.confidence_score * 100)}%` : "—"}</span>
+                      </p>
+                      <p>
+                        Conditions: <span className="text-white">{Array.isArray(geminiSummary.conditions_flagged) && geminiSummary.conditions_flagged.length > 0 ? geminiSummary.conditions_flagged.join(", ") : "None flagged"}</span>
+                      </p>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>

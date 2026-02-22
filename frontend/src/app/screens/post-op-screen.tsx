@@ -3,6 +3,10 @@ import { useNavigate } from "react-router";
 import { Stethoscope } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
+import { VoiceAssistantButton } from "../components/voice-assistant-button";
+
+const POST_OP_TRANSCRIPT =
+  "Post-op test. Run a post-operative assessment to compare against your baseline. Same short eye-tracking test—results appear on your dashboard. Complete the test when you're ready. Your results will be compared to your pre-op baseline.";
 
 export function PostOpScreen() {
   const navigate = useNavigate();
@@ -17,7 +21,7 @@ export function PostOpScreen() {
         <h1 className="text-2xl font-bold text-white text-center mb-2">Post-op test</h1>
         <p className="text-white/60 text-center mb-8">
           Run a post-operative assessment to compare against your baseline. Same short
-          eye-tracking and voice test—results appear on your dashboard.
+          eye-tracking test—results appear on your dashboard.
         </p>
         <Card className="p-6 bg-white/5 border border-white/10 rounded-xl w-full max-w-md mb-8">
           <p className="text-sm text-white/70 mb-4">
@@ -25,13 +29,14 @@ export function PostOpScreen() {
             pre-op baseline.
           </p>
           <Button
-            onClick={() => navigate("/instructions")}
+            onClick={() => navigate("/instructions?mode=postop")}
             className="w-full h-12 bg-gradient-to-r from-[#00d4ff] to-[#7c3aed] hover:opacity-90 text-white font-semibold rounded-xl"
           >
             Start post-op test
           </Button>
         </Card>
       </div>
+      <VoiceAssistantButton instructionType="post_op_start" transcript={POST_OP_TRANSCRIPT} />
     </div>
   );
 }

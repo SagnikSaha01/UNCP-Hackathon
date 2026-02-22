@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import {
   LayoutDashboard,
@@ -10,6 +10,7 @@ import {
   ChevronRight,
   FileText,
   Play,
+  LogOut,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
@@ -17,48 +18,114 @@ import { Badge } from "../components/ui/badge";
 import { Progress } from "../components/ui/progress";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { VoiceAssistantButton } from "../components/voice-assistant-button";
+import { useAuth } from "../context/auth-context";
 import { motion } from "motion/react";
+import { buildApiUrl } from "../config/api";
+import { loadLatestGeminiSummary } from "../lib/gemini-analysis";
 
-/** Parsed single explanation line: metric:value:threshold:description */
+/** Parsed single explanation line: metric:baseline:latest:description */
 function parseExplanationLine(line: string) {
   const parts = line.split(":");
-  if (parts.length < 4) return { metric: line, value: "", threshold: "", description: line };
+  if (parts.length < 4) return { metric: line, baseline: "", latest: "", description: line, delta: null, trend: "stable" as const };
   const metric = parts[0].replace(/_/g, " ");
-  const value = parts[1];
-  const threshold = parts[2];
+  const baseline = parts[1].trim();
+  const latest = parts[2].trim();
   const description = parts.slice(3).join(":").trim();
-  return { metric, value, threshold, description };
+
+  // Compute delta for indicator
+  const baseNum = parseFloat(baseline);
+  const latestNum = parseFloat(latest);
+  let delta: number | null = null;
+  let trend: "up" | "down" | "stable" = "stable";
+  if (!isNaN(baseNum) && !isNaN(latestNum)) {
+    delta = latestNum - baseNum;
+    if (Math.abs(delta) < 0.0001) trend = "stable";
+    else trend = delta > 0 ? "up" : "down";
+  }
+
+  return { metric, baseline, latest, description, delta, trend };
 }
 
-const MOCK_DASHBOARD = {
-  risk_level: "high" as const,
-  conditions_flagged: ["post_op_delirium"],
-  confidence_score: 0.85,
-  explanation: [
-    "saccade_velocity:204.6:148:Saccadic peak velocity decreased significantly, indicating potential spatial attention and motor control issues.",
-    "fixation_stability:0.832:0.58:Reduced fixation stability suggests compromised attention control.",
-    "pupil_variability:0.038:0.13:Increased pupil variability may reflect stress or altered autonomic function.",
-    "smooth_pursuit_gain:0.86:0.6:Decreased smooth pursuit gain suggests potential deterioration in attention.",
-    "saccade_accuracy:0.908:0.71:Reduced accuracy could denote cognitive decline.",
-    "prosaccade_latency:197.8:290:Longer prosaccade latency points to potential neurological deficits.",
-  ],
-  research_references_used: [
-    "Saccade Tasks: A Noninvasive Approach for Predicting Postoperative Delirium in Elderly Arthroplasty Patients — Kang et al.",
-    "A Dual-Camera Eye-Tracking Platform for Rapid Real-Time Diagnosis of Acute Delirium: A Pilot Study — Al-Hindawi et al.",
-  ],
-  // Extra dashboard fields
-  total_tests_done: 12,
-  last_assessment_at: "2025-02-21T14:30:00Z",
-  baseline_assessment_at: "2025-02-18T09:00:00Z",
-  patient_name: "Patient", // overridden by URL ?name=
+function TrendBadge({ trend, delta }: { trend: "up" | "down" | "stable"; delta: number | null }) {
+  if (trend === "stable")
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-white/60">
+        ● Stable
+      </span>
+    );
+  const color = trend === "up" ? "text-amber-300 bg-amber-400/15" : "text-sky-300 bg-sky-400/15";
+  const arrow = trend === "up" ? "↑" : "↓";
+  const label = delta != null ? `${arrow} ${Math.abs(delta).toFixed(4)}` : arrow;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${color}`}>
+      {label}
+    </span>
+  );
+}
+
+type DashboardData = {
+  risk_level: string;
+  conditions_flagged: string[];
+  confidence_score: number;
+  explanation: string[];
+  research_references_used: string[];
+  total_tests_done: number;
+  last_assessment_at: string;
+  baseline_assessment_at: string;
+  patient_name: string;
+  has_clinical_summary: boolean;
 };
+
+type SessionRecord = {
+  timestamp?: string;
+  time_series?: Array<Record<string, unknown>>;
+  session_averages?: Record<string, number | null>;
+  baseline_snapshot?: Record<string, number | null>;
+  derived_metrics?: {
+    deltas_vs_baseline?: Record<string, number | null>;
+  };
+  gemini_summary?: {
+    risk_level?: string;
+    conditions_flagged?: string[];
+    confidence_score?: number;
+    explanation?: string[];
+    research_references_used?: string[];
+    patient_name?: string;
+  };
+};
+
+type PatientRecord = {
+  name?: string;
+  created_at?: string;
+};
+
+function formatMetricEntry(
+  metricKey: string,
+  baselineValue: number | null | undefined,
+  latestValue: number | null | undefined,
+  deltaValue: number | null | undefined,
+): string | null {
+  if (latestValue == null) return null;
+
+  const baseline = baselineValue ?? latestValue;
+  const latest = latestValue;
+  const delta = deltaValue ?? (baseline != null ? latest - baseline : 0);
+  const trend = delta > 0 ? "increased" : delta < 0 ? "decreased" : "stable";
+  const evidence =
+    delta === 0
+      ? "Initial baseline session captured for this metric."
+      : `Metric ${trend} by ${Math.abs(delta).toFixed(4)} versus baseline.`;
+
+  return `${metricKey}:${baseline}:${latest}:${evidence}`;
+}
 
 function getRiskStyle(level: string) {
   switch (level) {
     case "high":
       return { bg: "#ef4444", bgLight: "#ef444415", border: "#ef444440", label: "High risk" };
+    case "moderate":
     case "medium":
-      return { bg: "#f59e0b", bgLight: "#f59e0b15", border: "#f59e0b40", label: "Medium risk" };
+      return { bg: "#f59e0b", bgLight: "#f59e0b15", border: "#f59e0b40", label: "Moderate risk" };
     case "low":
       return { bg: "#10b981", bgLight: "#10b98115", border: "#10b98140", label: "Low risk" };
     default:
@@ -69,24 +136,148 @@ function getRiskStyle(level: string) {
 export function DashboardScreen() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const nameFromUrl = searchParams.get("name");
-  const data = {
-    ...MOCK_DASHBOARD,
-    patient_name: nameFromUrl?.trim() || MOCK_DASHBOARD.patient_name,
-  };
-  const riskStyle = getRiskStyle(data.risk_level);
+  const { logout, user, getCurrentPatientId } = useAuth();
 
-  const dashboardTranscript = [
-    `Assessment dashboard for ${data.patient_name}.`,
-    `Risk level is ${riskStyle.label.toLowerCase()}.`,
-    data.conditions_flagged.length
-      ? `Conditions flagged: ${data.conditions_flagged.map((c) => c.replace(/_/g, " ")).join(", ")}.`
-      : "",
-    `Confidence score is ${(data.confidence_score * 100).toFixed(0)} percent.`,
-    `${data.total_tests_done} tests completed. Last assessment ${new Date(data.last_assessment_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.`,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const nameFromUrl = searchParams.get("name");
+  const fallbackPatientName = user?.name || nameFromUrl?.trim() || "Patient";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadDashboard = async () => {
+      const resolvedPatientId = await getCurrentPatientId();
+      if (!resolvedPatientId) {
+        if (!cancelled) {
+          setDashboardData(null);
+          setLoading(false);
+        }
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        // Patient data now comes from /auth/whoami (users collection)
+        const userId = user?.userId || "";
+        const [whoamiRes, sessionsRes] = await Promise.all([
+          userId
+            ? fetch(buildApiUrl(`/auth/whoami?user_id=${encodeURIComponent(userId)}`))
+            : Promise.resolve(null),
+          fetch(buildApiUrl(`/session/${encodeURIComponent(resolvedPatientId)}`)),
+        ]);
+
+        const patientData: PatientRecord =
+          whoamiRes && whoamiRes.ok ? await whoamiRes.json() : {};
+        const sessionsData: SessionRecord[] = sessionsRes.ok
+          ? await sessionsRes.json()
+          : [];
+
+        const latest = sessionsData.length > 0 ? sessionsData[sessionsData.length - 1] : null;
+        const first = sessionsData.length > 0 ? sessionsData[0] : null;
+        const persistedSummary = loadLatestGeminiSummary(resolvedPatientId) || {};
+        const summary = {
+          ...persistedSummary,
+          ...(latest?.gemini_summary || {}),
+        };
+        const sessionAverages = latest?.session_averages || {};
+        const baselineSnapshot = latest?.baseline_snapshot || {};
+        const deltas = latest?.derived_metrics?.deltas_vs_baseline || {};
+
+        const hasSummaryData =
+          !!summary.risk_level ||
+          typeof summary.confidence_score === "number" ||
+          (Array.isArray(summary.explanation) && summary.explanation.length > 0) ||
+          (Array.isArray(summary.conditions_flagged) && summary.conditions_flagged.length > 0);
+
+        const fallbackExplanation = Object.keys(sessionAverages)
+          .map((metricKey) =>
+            formatMetricEntry(
+              metricKey,
+              baselineSnapshot[metricKey],
+              sessionAverages[metricKey],
+              deltas[`delta_${metricKey}`],
+            )
+          )
+          .filter((entry): entry is string => !!entry);
+
+        const explanationFromSummary = Array.isArray(summary.explanation) ? summary.explanation : [];
+        const explanation = explanationFromSummary.length > 0 ? explanationFromSummary : fallbackExplanation;
+
+        if (!latest) {
+          if (!cancelled) {
+            setDashboardData(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const mapped: DashboardData = {
+          risk_level: summary.risk_level || "inconclusive",
+          conditions_flagged: Array.isArray(summary.conditions_flagged)
+            ? summary.conditions_flagged
+            : [],
+          confidence_score:
+            typeof summary.confidence_score === "number"
+              ? summary.confidence_score
+              : 0,
+          explanation,
+          research_references_used: Array.isArray(summary.research_references_used)
+            ? summary.research_references_used
+            : [],
+          total_tests_done: Array.isArray(latest.time_series) ? latest.time_series.length : 0,
+          last_assessment_at:
+            latest.timestamp || patientData.created_at || new Date().toISOString(),
+          baseline_assessment_at:
+            first?.timestamp || patientData.created_at || new Date().toISOString(),
+          patient_name:
+            summary.patient_name || patientData.name || fallbackPatientName,
+          has_clinical_summary: hasSummaryData,
+        };
+
+        if (!cancelled) {
+          setDashboardData(mapped);
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Could not load dashboard data.");
+          setLoading(false);
+        }
+      }
+    };
+
+    loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getCurrentPatientId, fallbackPatientName]);
+
+  const data = dashboardData;
+  const riskStyle = getRiskStyle(data?.risk_level || "inconclusive");
+  const hasData = !!data;
+
+  const dashboardTranscript = useMemo(() => {
+    if (!data) {
+      return "No data to display yet. Take your first baseline test to generate dashboard insights.";
+    }
+    return [
+      `Assessment dashboard for ${data.patient_name}.`,
+      data.has_clinical_summary ? `Risk level is ${riskStyle.label.toLowerCase()}.` : "",
+      data.conditions_flagged.length
+        ? `Conditions flagged: ${data.conditions_flagged.map((c) => c.replace(/_/g, " ")).join(", ")}.`
+        : "",
+      data.has_clinical_summary ? `Confidence score is ${(data.confidence_score * 100).toFixed(0)} percent.` : "",
+      `${data.total_tests_done} tests completed. Last assessment ${new Date(data.last_assessment_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }, [data, riskStyle.label]);
 
   return (
     <div className="min-h-screen bg-[#0a0f1e] p-6 relative overflow-hidden">
@@ -114,14 +305,43 @@ export function DashboardScreen() {
             </Button>
             <Button
               variant="outline"
-              className="border-white/10 bg-white/5 text-white hover:bg-white/10"
-              onClick={() => navigate("/")}
+              className="border-white/10 bg-white/5 text-white hover:bg-red-500/20 hover:border-red-500/40 hover:text-red-300"
+              onClick={() => { logout(); navigate("/"); }}
             >
-              Back to app
+              <LogOut className="mr-2 h-4 w-4" />
+              Log out
             </Button>
           </div>
         </div>
 
+        {loading && (
+          <Card className="p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl text-white/80">
+            Loading dashboard data...
+          </Card>
+        )}
+
+        {!loading && error && (
+          <Card className="p-6 bg-red-500/10 border border-red-500/30 rounded-xl text-red-200">
+            {error}
+          </Card>
+        )}
+
+        {!loading && !error && !hasData && (
+          <Card className="p-8 bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl text-center space-y-4">
+            <p className="text-white text-lg font-semibold">No data to display, take your first test!</p>
+            <div>
+              <Button
+                onClick={() => navigate("/baseline")}
+                className="bg-gradient-to-r from-[#00d4ff] to-[#7c3aed] hover:opacity-90 text-white"
+              >
+                Take baseline test
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        {!loading && !error && hasData && (
+          <>
         {/* Stats row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <motion.div
@@ -191,7 +411,6 @@ export function DashboardScreen() {
           </motion.div>
         </div>
 
-        {/* Risk level + conditions + confidence */}
         <div className="grid md:grid-cols-3 gap-4">
           <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -211,7 +430,7 @@ export function DashboardScreen() {
                 }}
               >
                 <span className="font-semibold capitalize" style={{ color: riskStyle.bg }}>
-                  {riskStyle.label}
+                  {data.has_clinical_summary ? riskStyle.label : "No data"}
                 </span>
               </div>
             </Card>
@@ -227,7 +446,7 @@ export function DashboardScreen() {
                 <span className="text-sm font-medium">Conditions flagged</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                {data.conditions_flagged.map((c) => (
+                {data.conditions_flagged.length > 0 ? data.conditions_flagged.map((c) => (
                   <Badge
                     key={c}
                     variant="destructive"
@@ -235,7 +454,7 @@ export function DashboardScreen() {
                   >
                     {c.replace(/_/g, " ")}
                   </Badge>
-                ))}
+                )) : <span className="font-semibold capitalize" style={{ color: riskStyle.bg }}>No conditions</span>}
               </div>
             </Card>
           </motion.div>
@@ -250,10 +469,10 @@ export function DashboardScreen() {
               </div>
               <div className="space-y-2">
                 <p className="text-2xl font-bold text-white">
-                  {(data.confidence_score * 100).toFixed(0)}%
+                  {data.has_clinical_summary ? `${(data.confidence_score * 100).toFixed(0)}%` : "0%"}
                 </p>
                 <Progress
-                  value={data.confidence_score * 100}
+                  value={data.has_clinical_summary ? data.confidence_score * 100 : 0}
                   className="h-2 bg-white/10"
                 />
               </div>
@@ -274,22 +493,53 @@ export function DashboardScreen() {
             </h2>
             <ScrollArea className="h-[280px] pr-4">
               <ul className="space-y-3">
-                {data.explanation.map((line, i) => {
-                  const { metric, value, threshold, description } = parseExplanationLine(line);
+                {(data.explanation.length > 0 ? data.explanation : ["NO DATA"]).map((line, i) => {
+                  if (line === "NO DATA") {
+                    return (
+                      <li key={i}>
+                        <Card className="p-4 bg-white/5 border border-white/10 rounded-lg">
+                          <p className="text-sm text-white/60">NO DATA</p>
+                        </Card>
+                      </li>
+                    );
+                  }
+                  const { metric, baseline, latest, description, delta, trend } = parseExplanationLine(line);
                   return (
                     <li key={i}>
                       <Card className="p-4 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 transition-colors">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-[#00d4ff] capitalize">
-                              {metric}
-                            </p>
-                            <p className="text-xs text-white/50 mt-0.5">
-                              Value: {value} · Threshold: {threshold}
-                            </p>
-                            <p className="text-sm text-white/80 mt-1">{description}</p>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1 space-y-2">
+                            {/* Metric name + trend badge */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-semibold text-[#00d4ff] capitalize">
+                                {metric}
+                              </p>
+                              <TrendBadge trend={trend} delta={delta} />
+                            </div>
+                            {/* Baseline vs Latest values */}
+                            {(baseline || latest) && (
+                              <div className="flex items-center gap-4">
+                                {baseline && (
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-white/40">Baseline</span>
+                                    <p className="text-sm font-medium text-white/70 tabular-nums">{baseline}</p>
+                                  </div>
+                                )}
+                                {baseline && latest && (
+                                  <span className="text-white/20 text-lg">→</span>
+                                )}
+                                {latest && (
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-white/40">Latest</span>
+                                    <p className="text-sm font-medium text-white tabular-nums">{latest}</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {/* Description */}
+                            <p className="text-xs leading-relaxed text-white/60">{description}</p>
                           </div>
-                          <ChevronRight className="h-4 w-4 text-white/40 shrink-0 mt-0.5" />
+                          <ChevronRight className="h-4 w-4 text-white/30 shrink-0 mt-1" />
                         </div>
                       </Card>
                     </li>
@@ -312,7 +562,7 @@ export function DashboardScreen() {
               Research references used
             </h2>
             <ul className="space-y-2">
-              {data.research_references_used.map((ref, i) => (
+              {(data.research_references_used.length > 0 ? data.research_references_used : ["NO DATA"]).map((ref, i) => (
                 <li
                   key={i}
                   className="text-sm text-white/80 pl-4 border-l-2 border-white/20 py-1"
@@ -323,6 +573,8 @@ export function DashboardScreen() {
             </ul>
           </Card>
         </motion.div>
+          </>
+        )}
       </div>
 
       <VoiceAssistantButton transcript={dashboardTranscript} />
