@@ -25,7 +25,7 @@ export function BaselineScreen() {
             instructions.
           </p>
           <Button
-            onClick={() => navigate("/instructions")}
+            onClick={() => navigate("/instructions?mode=baseline")}
             className="w-full h-12 bg-gradient-to-r from-[#00d4ff] to-[#7c3aed] hover:opacity-90 text-white font-semibold rounded-xl"
           >
             Start baseline assessment

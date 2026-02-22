@@ -57,6 +57,13 @@ class AuthResponse(BaseModel):
     name: str
 
 
+class WhoAmIResponse(BaseModel):
+    user_id: str
+    patient_id: str
+    email: str
+    name: str
+
+
 # ---------------------------------------------------------------------------
 # Password helpers
 # ---------------------------------------------------------------------------
@@ -133,6 +140,24 @@ async def login(body: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
 
     return AuthResponse(
+        user_id=user["_id"],
+        patient_id=user["patient_id"],
+        email=user["email"],
+        name=user["name"],
+    )
+
+
+@router.get("/whoami", response_model=WhoAmIResponse)
+async def whoami(user_id: str):
+    uid = user_id.strip()
+    if not uid:
+        raise HTTPException(status_code=400, detail="user_id is required.")
+
+    user = await _users().find_one({"_id": uid})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    return WhoAmIResponse(
         user_id=user["_id"],
         patient_id=user["patient_id"],
         email=user["email"],

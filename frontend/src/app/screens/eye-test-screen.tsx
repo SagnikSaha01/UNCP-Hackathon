@@ -1,5 +1,5 @@
 import React from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { X } from "lucide-react";
 import {
   useRef,
@@ -10,6 +10,8 @@ import {
 import { Button } from "../components/ui/button";
 import { VoiceAssistantButton } from "../components/voice-assistant-button";
 import type { FaceMeshResults } from "../../global";
+import { useAuth } from "../context/auth-context";
+import { buildApiUrl } from "../config/api";
 
 // --- Ocular test constants (from AURA kinematics) ---
 // VELOCITY_SCALE: iris x moves ~0–1 normalized, dt in ms.
@@ -66,6 +68,9 @@ type ExamPhase = "fixation" | "saccade" | "pursuit" | "flash" | null;
 
 export function EyeTestScreen() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { getCurrentPatientId } = useAuth();
+  const mode = searchParams.get("mode") === "postop" ? "postop" : "baseline";
   const videoRef = useRef<HTMLVideoElement>(null);
   const pipVideoRef = useRef<HTMLVideoElement>(null); // small camera preview
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -141,6 +146,54 @@ export function EyeTestScreen() {
   const [prosaccadeLatency, setProsaccadeLatency] = useState<number | null>(null);
   const [saccadeAccuracy, setSaccadeAccuracy] = useState<number | null>(null);
   const [smoothPursuitGain, setSmoothPursuitGain] = useState<number | null>(null);
+
+  const persistEyeMetricsToMongo = useCallback(
+    async (reading: {
+      timestamp: string;
+      saccade_velocity: number | null;
+      fixation_stability: number | null;
+      pupil_variability: number | null;
+      smooth_pursuit_gain: number | null;
+      saccade_accuracy: number | null;
+      prosaccade_latency: number | null;
+    }) => {
+      const patientId = await getCurrentPatientId();
+      if (!patientId) return;
+
+      let timeSeries: Array<Record<string, unknown>> = [reading];
+
+      if (mode !== "baseline") {
+        try {
+          const priorRes = await fetch(
+            buildApiUrl(`/session/${encodeURIComponent(patientId)}`)
+          );
+          if (priorRes.ok) {
+            const priorSessions = await priorRes.json();
+            const latest = Array.isArray(priorSessions) && priorSessions.length > 0
+              ? priorSessions[priorSessions.length - 1]
+              : null;
+            const existingSeries = Array.isArray(latest?.time_series)
+              ? latest.time_series
+              : [];
+
+            timeSeries = [...existingSeries, reading].slice(-5);
+          }
+        } catch {
+          timeSeries = [reading];
+        }
+      }
+
+      await fetch(buildApiUrl("/session"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patient_id: patientId,
+          time_series: timeSeries,
+        }),
+      });
+    },
+    [mode, getCurrentPatientId]
+  );
 
   function createFaceMesh() {
     if (typeof window === "undefined" || !window.FaceMesh) return null;
@@ -393,6 +446,12 @@ export function EyeTestScreen() {
     saccadeAccuracyRef.current = [];
     pursuitSamplesRef.current = [];
 
+    let fixationStabilityValue: number | null = null;
+    let pupilVariabilityValue: number | null = null;
+    let prosaccadeLatencyValue: number | null = null;
+    let saccadeAccuracyValue: number | null = null;
+    let smoothPursuitGainValue: number | null = null;
+
     examActiveRef.current = true;
 
     // Snapshot test-box screen bounds for gaze coordinate remapping.
@@ -429,9 +488,11 @@ export function EyeTestScreen() {
       const stdX = Math.sqrt(variance(xs));
       const stdY = Math.sqrt(variance(ys));
       const stability = Math.max(0, 1 - (stdX + stdY) * STABILITY_STD_SCALE);
-      setFixationStability(Math.round(stability * 1000) / 1000);
+      fixationStabilityValue = Math.round(stability * 1000) / 1000;
+      setFixationStability(fixationStabilityValue);
     } else {
-      setFixationStability(fix.length > 0 ? 0 : null);
+      fixationStabilityValue = fix.length > 0 ? 0 : null;
+      setFixationStability(fixationStabilityValue);
     }
 
     // --- Phase 1: Saccadic trials ---
@@ -544,8 +605,10 @@ export function EyeTestScreen() {
     }
     if (gains.length > 0) {
       const meanGain = gains.reduce((a, b) => a + b, 0) / gains.length;
-      setSmoothPursuitGain(Math.round(meanGain * 1000) / 1000);
+      smoothPursuitGainValue = Math.round(meanGain * 1000) / 1000;
+      setSmoothPursuitGain(smoothPursuitGainValue);
     } else {
+      smoothPursuitGainValue = null;
       setSmoothPursuitGain(null);
     }
 
@@ -565,19 +628,21 @@ export function EyeTestScreen() {
       // We scale ×1000 to produce values in the range ~0.1–1.0 that are
       // interpretable alongside the other 0–1 metrics.
       const v = variance(irisHist) * 1000;
-      setPupilVariability(Math.round(v * 1000) / 1000);
+      pupilVariabilityValue = Math.round(v * 1000) / 1000;
+      setPupilVariability(pupilVariabilityValue);
     } else {
-      setPupilVariability(irisHist.length > 0 ? 0 : null);
+      pupilVariabilityValue = irisHist.length > 0 ? 0 : null;
+      setPupilVariability(pupilVariabilityValue);
     }
 
     const latencies = prosaccadeLatenciesRef.current;
     if (latencies.length > 0) {
-      setProsaccadeLatency(
-        Math.round(
-          (latencies.reduce((a, b) => a + b, 0) / latencies.length) * 10
-        ) / 10
-      );
+      prosaccadeLatencyValue = Math.round(
+        (latencies.reduce((a, b) => a + b, 0) / latencies.length) * 10
+      ) / 10;
+      setProsaccadeLatency(prosaccadeLatencyValue);
     } else {
+      prosaccadeLatencyValue = null;
       setProsaccadeLatency(null);
     }
 
@@ -608,8 +673,10 @@ export function EyeTestScreen() {
       const medianAbs = absVals[Math.floor(absVals.length / 2)] || 0.001;
       const scores = validPairs.map((v) => Math.max(0, Math.min(1, v / medianAbs)));
       const meanScore = scores.reduce((a, b) => a + b, 0) / scores.length;
-      setSaccadeAccuracy(Math.round(meanScore * 1000) / 1000);
+      saccadeAccuracyValue = Math.round(meanScore * 1000) / 1000;
+      setSaccadeAccuracy(saccadeAccuracyValue);
     } else {
+      saccadeAccuracyValue = null;
       setSaccadeAccuracy(null);
     }
 
@@ -627,9 +694,24 @@ export function EyeTestScreen() {
     );
     setResultHeaderText(isDepressed ? "ABNORMAL" : "NORMAL");
     setStatusText(`Test complete: ${isDepressed ? "ABNORMAL" : "NORMAL"}`);
+
+    try {
+      await persistEyeMetricsToMongo({
+        timestamp: new Date().toISOString(),
+        saccade_velocity: Number(avgPeak.toFixed(4)),
+        fixation_stability: fixationStabilityValue,
+        pupil_variability: pupilVariabilityValue,
+        smooth_pursuit_gain: smoothPursuitGainValue,
+        saccade_accuracy: saccadeAccuracyValue,
+        prosaccade_latency: prosaccadeLatencyValue,
+      });
+    } catch {
+      // Non-blocking: user should still be able to continue exam flow.
+    }
+
     setShowResultsModal(true);
     setExamBtnDisabled(false);
-  }, [threshold]);
+  }, [threshold, persistEyeMetricsToMongo]);
 
   const handleDismissResults = () => {
     setShowResultsModal(false);

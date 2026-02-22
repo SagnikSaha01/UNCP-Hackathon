@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import {
   LayoutDashboard,
@@ -20,47 +20,55 @@ import { ScrollArea } from "../components/ui/scroll-area";
 import { VoiceAssistantButton } from "../components/voice-assistant-button";
 import { useAuth } from "../context/auth-context";
 import { motion } from "motion/react";
+import { buildApiUrl } from "../config/api";
 
-/** Parsed single explanation line: metric:value:threshold:description */
+/** Parsed single explanation line: metric:baseline:latest:description */
 function parseExplanationLine(line: string) {
   const parts = line.split(":");
-  if (parts.length < 4) return { metric: line, value: "", threshold: "", description: line };
+  if (parts.length < 4) return { metric: line, baseline: "", latest: "", description: line };
   const metric = parts[0].replace(/_/g, " ");
-  const value = parts[1];
-  const threshold = parts[2];
+  const baseline = parts[1];
+  const latest = parts[2];
   const description = parts.slice(3).join(":").trim();
-  return { metric, value, threshold, description };
+  return { metric, baseline, latest, description };
 }
 
-const MOCK_DASHBOARD = {
-  risk_level: "high" as const,
-  conditions_flagged: ["post_op_delirium"],
-  confidence_score: 0.85,
-  explanation: [
-    "saccade_velocity:204.6:148:Saccadic peak velocity decreased significantly, indicating potential spatial attention and motor control issues.",
-    "fixation_stability:0.832:0.58:Reduced fixation stability suggests compromised attention control.",
-    "pupil_variability:0.038:0.13:Increased pupil variability may reflect stress or altered autonomic function.",
-    "smooth_pursuit_gain:0.86:0.6:Decreased smooth pursuit gain suggests potential deterioration in attention.",
-    "saccade_accuracy:0.908:0.71:Reduced accuracy could denote cognitive decline.",
-    "prosaccade_latency:197.8:290:Longer prosaccade latency points to potential neurological deficits.",
-  ],
-  research_references_used: [
-    "Saccade Tasks: A Noninvasive Approach for Predicting Postoperative Delirium in Elderly Arthroplasty Patients — Kang et al.",
-    "A Dual-Camera Eye-Tracking Platform for Rapid Real-Time Diagnosis of Acute Delirium: A Pilot Study — Al-Hindawi et al.",
-  ],
-  // Extra dashboard fields
-  total_tests_done: 12,
-  last_assessment_at: "2025-02-21T14:30:00Z",
-  baseline_assessment_at: "2025-02-18T09:00:00Z",
-  patient_name: "Patient", // overridden by URL ?name=
+type DashboardData = {
+  risk_level: string;
+  conditions_flagged: string[];
+  confidence_score: number;
+  explanation: string[];
+  research_references_used: string[];
+  total_tests_done: number;
+  last_assessment_at: string;
+  baseline_assessment_at: string;
+  patient_name: string;
+};
+
+type SessionRecord = {
+  timestamp?: string;
+  gemini_summary?: {
+    risk_level?: string;
+    conditions_flagged?: string[];
+    confidence_score?: number;
+    explanation?: string[];
+    research_references_used?: string[];
+    patient_name?: string;
+  };
+};
+
+type PatientRecord = {
+  name?: string;
+  created_at?: string;
 };
 
 function getRiskStyle(level: string) {
   switch (level) {
     case "high":
       return { bg: "#ef4444", bgLight: "#ef444415", border: "#ef444440", label: "High risk" };
+    case "moderate":
     case "medium":
-      return { bg: "#f59e0b", bgLight: "#f59e0b15", border: "#f59e0b40", label: "Medium risk" };
+      return { bg: "#f59e0b", bgLight: "#f59e0b15", border: "#f59e0b40", label: "Moderate risk" };
     case "low":
       return { bg: "#10b981", bgLight: "#10b98115", border: "#10b98140", label: "Low risk" };
     default:
@@ -71,25 +79,123 @@ function getRiskStyle(level: string) {
 export function DashboardScreen() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { logout, user } = useAuth();
-  const nameFromUrl = searchParams.get("name");
-  const data = {
-    ...MOCK_DASHBOARD,
-    patient_name: user?.name || nameFromUrl?.trim() || MOCK_DASHBOARD.patient_name,
-  };
-  const riskStyle = getRiskStyle(data.risk_level);
+  const { logout, user, getCurrentPatientId } = useAuth();
 
-  const dashboardTranscript = [
-    `Assessment dashboard for ${data.patient_name}.`,
-    `Risk level is ${riskStyle.label.toLowerCase()}.`,
-    data.conditions_flagged.length
-      ? `Conditions flagged: ${data.conditions_flagged.map((c) => c.replace(/_/g, " ")).join(", ")}.`
-      : "",
-    `Confidence score is ${(data.confidence_score * 100).toFixed(0)} percent.`,
-    `${data.total_tests_done} tests completed. Last assessment ${new Date(data.last_assessment_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.`,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const nameFromUrl = searchParams.get("name");
+  const fallbackPatientName = user?.name || nameFromUrl?.trim() || "Patient";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadDashboard = async () => {
+      const resolvedPatientId = await getCurrentPatientId();
+      if (!resolvedPatientId) {
+        if (!cancelled) {
+          setDashboardData(null);
+          setLoading(false);
+        }
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const [patientRes, sessionsRes] = await Promise.all([
+          fetch(buildApiUrl(`/patients/${encodeURIComponent(resolvedPatientId)}`)),
+          fetch(buildApiUrl(`/session/${encodeURIComponent(resolvedPatientId)}`)),
+        ]);
+
+        const patientData: PatientRecord = patientRes.ok
+          ? await patientRes.json()
+          : {};
+        const sessionsData: SessionRecord[] = sessionsRes.ok
+          ? await sessionsRes.json()
+          : [];
+
+        const latest = sessionsData.length > 0 ? sessionsData[sessionsData.length - 1] : null;
+        const first = sessionsData.length > 0 ? sessionsData[0] : null;
+        const summary = latest?.gemini_summary || {};
+
+        const hasSummaryData =
+          !!summary.risk_level ||
+          typeof summary.confidence_score === "number" ||
+          (Array.isArray(summary.explanation) && summary.explanation.length > 0) ||
+          (Array.isArray(summary.conditions_flagged) && summary.conditions_flagged.length > 0);
+
+        if (!latest || !hasSummaryData) {
+          if (!cancelled) {
+            setDashboardData(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        const mapped: DashboardData = {
+          risk_level: summary.risk_level || "inconclusive",
+          conditions_flagged: Array.isArray(summary.conditions_flagged)
+            ? summary.conditions_flagged
+            : [],
+          confidence_score:
+            typeof summary.confidence_score === "number"
+              ? summary.confidence_score
+              : 0,
+          explanation: Array.isArray(summary.explanation) ? summary.explanation : [],
+          research_references_used: Array.isArray(summary.research_references_used)
+            ? summary.research_references_used
+            : [],
+          total_tests_done: sessionsData.length,
+          last_assessment_at:
+            latest.timestamp || patientData.created_at || new Date().toISOString(),
+          baseline_assessment_at:
+            first?.timestamp || patientData.created_at || new Date().toISOString(),
+          patient_name:
+            summary.patient_name || patientData.name || fallbackPatientName,
+        };
+
+        if (!cancelled) {
+          setDashboardData(mapped);
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Could not load dashboard data.");
+          setLoading(false);
+        }
+      }
+    };
+
+    loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getCurrentPatientId, fallbackPatientName]);
+
+  const data = dashboardData;
+  const riskStyle = getRiskStyle(data?.risk_level || "inconclusive");
+  const hasData = !!data;
+
+  const dashboardTranscript = useMemo(() => {
+    if (!data) {
+      return "No data to display yet. Take your first baseline test to generate dashboard insights.";
+    }
+    return [
+      `Assessment dashboard for ${data.patient_name}.`,
+      `Risk level is ${riskStyle.label.toLowerCase()}.`,
+      data.conditions_flagged.length
+        ? `Conditions flagged: ${data.conditions_flagged.map((c) => c.replace(/_/g, " ")).join(", ")}.`
+        : "",
+      `Confidence score is ${(data.confidence_score * 100).toFixed(0)} percent.`,
+      `${data.total_tests_done} tests completed. Last assessment ${new Date(data.last_assessment_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }, [data, riskStyle.label]);
 
   return (
     <div className="min-h-screen bg-[#0a0f1e] p-6 relative overflow-hidden">
@@ -126,6 +232,34 @@ export function DashboardScreen() {
           </div>
         </div>
 
+        {loading && (
+          <Card className="p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl text-white/80">
+            Loading dashboard data...
+          </Card>
+        )}
+
+        {!loading && error && (
+          <Card className="p-6 bg-red-500/10 border border-red-500/30 rounded-xl text-red-200">
+            {error}
+          </Card>
+        )}
+
+        {!loading && !error && !hasData && (
+          <Card className="p-8 bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl text-center space-y-4">
+            <p className="text-white text-lg font-semibold">No data to display, take your first test!</p>
+            <div>
+              <Button
+                onClick={() => navigate("/baseline")}
+                className="bg-gradient-to-r from-[#00d4ff] to-[#7c3aed] hover:opacity-90 text-white"
+              >
+                Take baseline test
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        {!loading && !error && hasData && (
+          <>
         {/* Stats row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <motion.div
@@ -231,7 +365,7 @@ export function DashboardScreen() {
                 <span className="text-sm font-medium">Conditions flagged</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                {data.conditions_flagged.map((c) => (
+                {data.conditions_flagged.length > 0 ? data.conditions_flagged.map((c) => (
                   <Badge
                     key={c}
                     variant="destructive"
@@ -239,7 +373,7 @@ export function DashboardScreen() {
                   >
                     {c.replace(/_/g, " ")}
                   </Badge>
-                ))}
+                )) : <span className="text-sm text-white/60">None</span>}
               </div>
             </Card>
           </motion.div>
@@ -279,7 +413,7 @@ export function DashboardScreen() {
             <ScrollArea className="h-[280px] pr-4">
               <ul className="space-y-3">
                 {data.explanation.map((line, i) => {
-                  const { metric, value, threshold, description } = parseExplanationLine(line);
+                  const { metric, baseline, latest, description } = parseExplanationLine(line);
                   return (
                     <li key={i}>
                       <Card className="p-4 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 transition-colors">
@@ -289,7 +423,7 @@ export function DashboardScreen() {
                               {metric}
                             </p>
                             <p className="text-xs text-white/50 mt-0.5">
-                              Value: {value} · Threshold: {threshold}
+                              Baseline: {baseline} · Latest: {latest}
                             </p>
                             <p className="text-sm text-white/80 mt-1">{description}</p>
                           </div>
@@ -327,6 +461,8 @@ export function DashboardScreen() {
             </ul>
           </Card>
         </motion.div>
+          </>
+        )}
       </div>
 
       <VoiceAssistantButton transcript={dashboardTranscript} />

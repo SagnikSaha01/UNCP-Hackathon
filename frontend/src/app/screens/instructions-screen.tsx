@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { ArrowRight, Volume2, Play, Pause, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../components/ui/button";
@@ -8,6 +8,8 @@ import { motion } from "motion/react";
 
 export function InstructionsScreen() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const mode = searchParams.get("mode") === "postop" ? "postop" : "baseline";
   const [isPlaying, setIsPlaying] = useState(false);
 
   const transcript = `Step 1: Follow the dot. Please sit comfortably and keep your head still. A blue dot will flash from side to side—follow it with your eyes only. Then it will move smoothly left and right. Follow the dot with your eyes only, not your head. When you're ready, press Begin Test.`;
@@ -117,7 +119,7 @@ export function InstructionsScreen() {
             Back
           </Button>
           <Button
-            onClick={() => navigate("/eye-test")}
+            onClick={() => navigate(`/eye-test?mode=${mode}`)}
             className="flex-1 h-12 bg-gradient-to-r from-[#00d4ff] to-[#7c3aed] hover:opacity-90 text-white text-sm font-semibold rounded-xl shadow-lg shadow-[#00d4ff]/20"
           >
             Begin Test

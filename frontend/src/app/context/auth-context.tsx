@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { buildApiUrl } from "../config/api";
 
 const AUTH_STORAGE_KEY = "aura-auth";
-const API_BASE = "http://localhost:8000";
 
 interface AuthUser {
   userId: string;
@@ -17,6 +17,7 @@ interface AuthContextType {
   walletAddress: string | null;
   login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   register: (email: string, password: string, name: string) => Promise<{ ok: boolean; error?: string }>;
+  getCurrentPatientId: () => Promise<string | null>;
   loginWithWallet: (address: string) => void;
   logout: () => void;
 }
@@ -46,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string): Promise<{ ok: boolean; error?: string }> => {
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      const res = await fetch(buildApiUrl("/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), password }),
@@ -73,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = async (email: string, password: string, name: string): Promise<{ ok: boolean; error?: string }> => {
     try {
-      const res = await fetch(`${API_BASE}/auth/register`, {
+      const res = await fetch(buildApiUrl("/auth/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), password, name: name.trim() }),
@@ -95,6 +96,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { ok: true };
     } catch {
       return { ok: false, error: "Could not reach the server. Is the backend running?" };
+    }
+  };
+
+  const getCurrentPatientId = async (): Promise<string | null> => {
+    if (!user?.userId) return null;
+    try {
+      const res = await fetch(
+        buildApiUrl(`/auth/whoami?user_id=${encodeURIComponent(user.userId)}`)
+      );
+      if (!res.ok) return user.patientId ?? null;
+      const data = await res.json();
+      const patientId = typeof data.patient_id === "string" ? data.patient_id : null;
+      if (!patientId) return user.patientId ?? null;
+
+      if (
+        patientId !== user.patientId ||
+        data.name !== user.name ||
+        data.email !== user.email
+      ) {
+        const refreshed = {
+          ...user,
+          patientId,
+          name: data.name ?? user.name,
+          email: data.email ?? user.email,
+        };
+        setUser(refreshed);
+        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(refreshed));
+      }
+
+      return patientId;
+    } catch {
+      return user.patientId ?? null;
     }
   };
 
@@ -126,6 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         walletAddress,
         login,
         register,
+        getCurrentPatientId,
         loginWithWallet,
         logout,
       }}
