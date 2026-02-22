@@ -1,4 +1,4 @@
-export const LOCALHOST = true;
+export const LOCALHOST = false;
 
 export const API_BASE_URL = LOCALHOST
   ? "https://localhost:8000"
