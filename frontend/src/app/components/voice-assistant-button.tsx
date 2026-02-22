@@ -5,7 +5,7 @@ import { Slider } from "../components/ui/slider";
 import { Switch } from "../components/ui/switch";
 import { useAccessibility } from "../context/accessibility-context";
 
-const DEFAULT_API_BASE = "https://aura-arf5n.ondigitalocean.app/";
+const DEFAULT_API_BASE = "https://aura-arf5n.ondigitalocean.app";
 
 interface VoiceAssistantButtonProps {
   transcript?: string;
