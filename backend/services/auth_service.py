@@ -6,10 +6,11 @@ Handles user registration and login.
 Collections
 -----------
 users — one document per user account.
-        Fields: _id (uuid), email, hashed_password, name, patient_id, created_at
+        Fields: _id (uuid), email, hashed_password, name, patient_id,
+                baseline, created_at
 
-On registration a linked patient document is automatically created so that
-session data can be stored against the user from their very first test.
+The users collection is the single source of truth for patient identity.
+No separate patients collection is used.
 """
 
 from __future__ import annotations
@@ -32,9 +33,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def _users():
     return get_db()["users"]
-
-def _patients():
-    return get_db()["patients"]
 
 
 # ---------------------------------------------------------------------------
@@ -99,28 +97,13 @@ async def register(body: RegisterRequest):
     patient_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
-    # Create user account
+    # Create user account (also serves as the patient record)
     await _users().insert_one({
         "_id": user_id,
         "email": email,
         "hashed_password": _hash_password(body.password),
         "name": name,
         "patient_id": patient_id,
-        "created_at": now,
-    })
-
-    # Auto-create linked patient document
-    await _patients().insert_one({
-        "_id": patient_id,
-        "name": name,
-        "email": email,
-        "user_id": user_id,
-        "age": None,
-        "surgery_type": None,
-        "surgery_date": None,
-        "medications": [],
-        "conditions": [],
-        "assigned_physician_id": None,
         "baseline": None,
         "created_at": now,
     })

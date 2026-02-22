@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import {
   useRef,
   useState,
@@ -12,6 +12,7 @@ import { VoiceAssistantButton } from "../components/voice-assistant-button";
 import type { FaceMeshResults } from "../../global";
 import { useAuth } from "../context/auth-context";
 import { buildApiUrl } from "../config/api";
+import { runGeminiAnalysisForPatient, type GeminiSummary } from "../lib/gemini-analysis";
 
 // --- Ocular test constants (from AURA kinematics) ---
 // VELOCITY_SCALE: iris x moves ~0–1 normalized, dt in ms.
@@ -146,6 +147,9 @@ export function EyeTestScreen() {
   const [prosaccadeLatency, setProsaccadeLatency] = useState<number | null>(null);
   const [saccadeAccuracy, setSaccadeAccuracy] = useState<number | null>(null);
   const [smoothPursuitGain, setSmoothPursuitGain] = useState<number | null>(null);
+  const [isGeminiLoading, setIsGeminiLoading] = useState(false);
+  const [geminiSummary, setGeminiSummary] = useState<GeminiSummary | null>(null);
+  const [geminiError, setGeminiError] = useState<string | null>(null);
 
   const persistEyeMetricsToMongo = useCallback(
     async (reading: {
@@ -160,40 +164,37 @@ export function EyeTestScreen() {
       const patientId = await getCurrentPatientId();
       if (!patientId) return;
 
-      let timeSeries: Array<Record<string, unknown>> = [reading];
-
-      if (mode !== "baseline") {
-        try {
-          const priorRes = await fetch(
-            buildApiUrl(`/session/${encodeURIComponent(patientId)}`)
-          );
-          if (priorRes.ok) {
-            const priorSessions = await priorRes.json();
-            const latest = Array.isArray(priorSessions) && priorSessions.length > 0
-              ? priorSessions[priorSessions.length - 1]
-              : null;
-            const existingSeries = Array.isArray(latest?.time_series)
-              ? latest.time_series
-              : [];
-
-            timeSeries = [...existingSeries, reading].slice(-5);
-          }
-        } catch {
-          timeSeries = [reading];
-        }
-      }
-
       await fetch(buildApiUrl("/session"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           patient_id: patientId,
-          time_series: timeSeries,
+          time_series: [reading],
         }),
       });
     },
-    [mode, getCurrentPatientId]
+    [getCurrentPatientId]
   );
+
+  const generateGeminiSummary = useCallback(async () => {
+    const patientId = await getCurrentPatientId();
+    if (!patientId) {
+      setGeminiError("Could not resolve patient context for AI analysis.");
+      return;
+    }
+
+    setIsGeminiLoading(true);
+    setGeminiError(null);
+    try {
+      const summary = await runGeminiAnalysisForPatient(patientId);
+      setGeminiSummary(summary);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI summary generation failed. You can continue and retry after next test.";
+      setGeminiError(message);
+    } finally {
+      setIsGeminiLoading(false);
+    }
+  }, [getCurrentPatientId]);
 
   function createFaceMesh() {
     if (typeof window === "undefined" || !window.FaceMesh) return null;
@@ -709,9 +710,12 @@ export function EyeTestScreen() {
       // Non-blocking: user should still be able to continue exam flow.
     }
 
+    setGeminiSummary(null);
+    setGeminiError(null);
     setShowResultsModal(true);
     setExamBtnDisabled(false);
-  }, [threshold, persistEyeMetricsToMongo]);
+    void generateGeminiSummary();
+  }, [threshold, persistEyeMetricsToMongo, generateGeminiSummary]);
 
   const handleDismissResults = () => {
     setShowResultsModal(false);
@@ -953,10 +957,36 @@ export function EyeTestScreen() {
                 </div>
                 <Button
                   onClick={handleContinue}
+                  disabled={isGeminiLoading}
                   className="col-span-2 h-11 rounded-xl font-semibold bg-[#00d4ff] text-[#0a0f1e] hover:opacity-90"
                 >
-                  Continue to Voice Test
+                  {isGeminiLoading ? "Generating AI Summary..." : "Continue to Voice Test"}
                 </Button>
+                <div className="col-span-2 rounded-xl bg-white/5 border border-white/10 p-4 space-y-2">
+                  <p className="text-[10px] text-white/50 uppercase tracking-wider">Gemini summary</p>
+                  {isGeminiLoading && (
+                    <div className="flex items-center gap-2 text-sm text-white/80">
+                      <Loader2 className="h-4 w-4 animate-spin text-[#00d4ff]" />
+                      Analysing...
+                    </div>
+                  )}
+                  {!isGeminiLoading && geminiError && (
+                    <p className="text-sm text-amber-300">{geminiError}</p>
+                  )}
+                  {!isGeminiLoading && !geminiError && geminiSummary && (
+                    <div className="space-y-1 text-xs text-white/80">
+                      <p>
+                        Risk: <span className="text-white">{geminiSummary.risk_level ?? "inconclusive"}</span>
+                      </p>
+                      <p>
+                        Confidence: <span className="text-white">{typeof geminiSummary.confidence_score === "number" ? `${Math.round(geminiSummary.confidence_score * 100)}%` : "—"}</span>
+                      </p>
+                      <p>
+                        Conditions: <span className="text-white">{Array.isArray(geminiSummary.conditions_flagged) && geminiSummary.conditions_flagged.length > 0 ? geminiSummary.conditions_flagged.join(", ") : "None flagged"}</span>
+                      </p>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>

@@ -1,15 +1,96 @@
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { Download, RotateCcw, CheckCircle, TrendingUp, Eye, Clock, Mic2 } from "lucide-react";
+import { Download, RotateCcw, CheckCircle, TrendingUp, Eye, Clock, Mic2, Loader2 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { VoiceAssistantButton } from "../components/voice-assistant-button";
 import { motion } from "motion/react";
+import { useAuth } from "../context/auth-context";
+import { buildApiUrl } from "../config/api";
+import { loadLatestGeminiSummary } from "../lib/gemini-analysis";
+
+type SessionRecord = {
+  timestamp?: string;
+  session_averages?: Record<string, number | null>;
+  baseline_snapshot?: Record<string, number | null>;
+  derived_metrics?: {
+    deltas_vs_baseline?: Record<string, number | null>;
+  };
+  gemini_summary?: {
+    risk_level?: string;
+    conditions_flagged?: string[];
+    confidence_score?: number;
+    explanation?: string[];
+    research_references_used?: string[];
+    patient_name?: string;
+  };
+};
 
 export function ResultsScreen() {
   const navigate = useNavigate();
+  const { getCurrentPatientId } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [latestSession, setLatestSession] = useState<SessionRecord | null>(null);
+  const [summary, setSummary] = useState<SessionRecord["gemini_summary"]>({});
 
-  // Mock data - in real app would come from assessment
-  const cognitiveScore = 82;
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const patientId = await getCurrentPatientId();
+        if (!patientId) {
+          if (!cancelled) {
+            setLatestSession(null);
+            setSummary({});
+            setLoading(false);
+          }
+          return;
+        }
+
+        const sessionsRes = await fetch(buildApiUrl(`/session/${encodeURIComponent(patientId)}`));
+        const sessions: SessionRecord[] = sessionsRes.ok ? await sessionsRes.json() : [];
+        const latest = Array.isArray(sessions) && sessions.length > 0 ? sessions[sessions.length - 1] : null;
+        const cachedSummary = loadLatestGeminiSummary(patientId) || {};
+        const mergedSummary = {
+          ...cachedSummary,
+          ...(latest?.gemini_summary || {}),
+        };
+
+        if (!cancelled) {
+          setLatestSession(latest);
+          setSummary(mergedSummary);
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Could not load latest assessment results.");
+          setLoading(false);
+        }
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [getCurrentPatientId]);
+
+  const riskLevelValue = summary?.risk_level ?? "inconclusive";
+  const confidenceScore = typeof summary?.confidence_score === "number" ? summary.confidence_score : null;
+  const cognitiveScore = confidenceScore != null
+    ? Math.max(0, Math.min(100, Math.round(confidenceScore * 100)))
+    : riskLevelValue === "high"
+      ? 35
+      : riskLevelValue === "moderate" || riskLevelValue === "medium"
+        ? 60
+        : riskLevelValue === "low"
+          ? 85
+          : 50;
+
   const riskLevel: "green" | "amber" | "red" =
     cognitiveScore >= 75 ? "green" : cognitiveScore >= 50 ? "amber" : "red";
 
@@ -35,31 +116,51 @@ export function ResultsScreen() {
     }
   };
 
-  const metrics = [
-    {
-      icon: Eye,
-      label: "Eye Tracking Stability",
-      value: "85%",
-      change: "+2%",
-      status: "good",
-    },
-    {
-      icon: Clock,
-      label: "Reaction Time",
-      value: "0.42s",
-      change: "No change",
-      status: "good",
-    },
-    {
-      icon: Mic2,
-      label: "Speech Rhythm",
-      value: "Steady",
-      change: "+5%",
-      status: "good",
-    },
-  ];
+  const metrics = useMemo(() => {
+    const avg = latestSession?.session_averages || {};
+    const deltas = latestSession?.derived_metrics?.deltas_vs_baseline || {};
 
-  const transcript = `Your cognitive stability summary. Your overall score is ${cognitiveScore} out of 100, indicating a stable cognitive state. Eye tracking stability is at 85 percent, reaction time is normal at 0.42 seconds, and speech rhythm is steady. These results show consistent performance compared to your baseline. You can save this report or repeat the assessment if desired.`;
+    const metricDefs = [
+      {
+        icon: Eye,
+        key: "fixation_stability",
+        label: "Eye Tracking Stability",
+        formatter: (value: number) => `${Math.round(value * 100)}%`,
+      },
+      {
+        icon: Clock,
+        key: "prosaccade_latency",
+        label: "Reaction Time",
+        formatter: (value: number) => `${value.toFixed(2)} ms`,
+      },
+      {
+        icon: Mic2,
+        key: "smooth_pursuit_gain",
+        label: "Tracking Smoothness",
+        formatter: (value: number) => `${Math.round(value * 100)}%`,
+      },
+    ];
+
+    return metricDefs.map((metric) => {
+      const value = avg[metric.key];
+      const delta = deltas[`delta_${metric.key}`];
+      return {
+        icon: metric.icon,
+        label: metric.label,
+        value: typeof value === "number" ? metric.formatter(value) : "—",
+        change:
+          typeof delta === "number"
+            ? `${delta > 0 ? "+" : ""}${delta.toFixed(3)}`
+            : "No baseline delta",
+      };
+    });
+  }, [latestSession]);
+
+  const primaryExplanation = Array.isArray(summary?.explanation) && summary.explanation.length > 0
+    ? summary.explanation[0]
+    : "Your latest test was processed and baseline-linked metrics are available on this report.";
+
+  const transcript = `Assessment summary ready. Risk level is ${summary?.risk_level ?? "inconclusive"} with score ${cognitiveScore} out of 100. ${primaryExplanation}`;
 
   return (
     <div className="min-h-screen bg-[#0a0f1e] p-6 relative overflow-hidden">
@@ -84,6 +185,24 @@ export function ResultsScreen() {
             })}
           </p>
         </div>
+
+        {loading && (
+          <Card className="p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl">
+            <div className="flex items-center gap-2 text-white/80">
+              <Loader2 className="h-4 w-4 animate-spin text-[#00d4ff]" />
+              Loading latest Gemini summary...
+            </div>
+          </Card>
+        )}
+
+        {!loading && error && (
+          <Card className="p-6 bg-red-500/10 border border-red-500/30 rounded-xl text-red-200">
+            {error}
+          </Card>
+        )}
+
+        {!loading && !error && (
+          <>
 
         {/* Score Circle */}
         <motion.div
@@ -131,7 +250,7 @@ export function ResultsScreen() {
                 }}
               >
                 <p className="text-sm font-semibold" style={{ color: getRiskColor() }}>
-                  {getRiskText()}
+                  {summary?.risk_level ? `${summary.risk_level.toUpperCase()} RISK` : getRiskText()}
                 </p>
               </div>
             </div>
@@ -184,10 +303,7 @@ export function ResultsScreen() {
             What This Means
           </h2>
           <p className="text-sm text-white/80 leading-relaxed">
-            Your results show <strong className="text-[#00d4ff]">stable cognitive function</strong> with consistent eye
-            tracking, normal reaction times, and steady speech patterns. These measurements
-            are within the healthy range and show positive trends compared to your baseline.
-            Continue monitoring your cognitive health with regular assessments.
+            {primaryExplanation}
           </p>
         </Card>
 
@@ -216,6 +332,8 @@ export function ResultsScreen() {
             Share these results with your healthcare provider if needed.
           </p>
         </Card>
+        </>
+        )}
       </div>
 
       {/* Floating Voice Assistant Button */}

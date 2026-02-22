@@ -21,6 +21,7 @@ import { VoiceAssistantButton } from "../components/voice-assistant-button";
 import { useAuth } from "../context/auth-context";
 import { motion } from "motion/react";
 import { buildApiUrl } from "../config/api";
+import { loadLatestGeminiSummary } from "../lib/gemini-analysis";
 
 /** Parsed single explanation line: metric:baseline:latest:description */
 function parseExplanationLine(line: string) {
@@ -48,6 +49,7 @@ type DashboardData = {
 
 type SessionRecord = {
   timestamp?: string;
+  time_series?: Array<Record<string, unknown>>;
   session_averages?: Record<string, number | null>;
   baseline_snapshot?: Record<string, number | null>;
   derived_metrics?: {
@@ -131,21 +133,28 @@ export function DashboardScreen() {
       setError(null);
 
       try {
-        const [patientRes, sessionsRes] = await Promise.all([
-          fetch(buildApiUrl(`/patients/${encodeURIComponent(resolvedPatientId)}`)),
+        // Patient data now comes from /auth/whoami (users collection)
+        const userId = user?.userId || "";
+        const [whoamiRes, sessionsRes] = await Promise.all([
+          userId
+            ? fetch(buildApiUrl(`/auth/whoami?user_id=${encodeURIComponent(userId)}`))
+            : Promise.resolve(null),
           fetch(buildApiUrl(`/session/${encodeURIComponent(resolvedPatientId)}`)),
         ]);
 
-        const patientData: PatientRecord = patientRes.ok
-          ? await patientRes.json()
-          : {};
+        const patientData: PatientRecord =
+          whoamiRes && whoamiRes.ok ? await whoamiRes.json() : {};
         const sessionsData: SessionRecord[] = sessionsRes.ok
           ? await sessionsRes.json()
           : [];
 
         const latest = sessionsData.length > 0 ? sessionsData[sessionsData.length - 1] : null;
         const first = sessionsData.length > 0 ? sessionsData[0] : null;
-        const summary = latest?.gemini_summary || {};
+        const persistedSummary = loadLatestGeminiSummary(resolvedPatientId) || {};
+        const summary = {
+          ...persistedSummary,
+          ...(latest?.gemini_summary || {}),
+        };
         const sessionAverages = latest?.session_averages || {};
         const baselineSnapshot = latest?.baseline_snapshot || {};
         const deltas = latest?.derived_metrics?.deltas_vs_baseline || {};
@@ -170,7 +179,7 @@ export function DashboardScreen() {
         const explanationFromSummary = Array.isArray(summary.explanation) ? summary.explanation : [];
         const explanation = explanationFromSummary.length > 0 ? explanationFromSummary : fallbackExplanation;
 
-        if (!latest || explanation.length === 0) {
+        if (!latest) {
           if (!cancelled) {
             setDashboardData(null);
             setLoading(false);
@@ -191,7 +200,7 @@ export function DashboardScreen() {
           research_references_used: Array.isArray(summary.research_references_used)
             ? summary.research_references_used
             : [],
-          total_tests_done: sessionsData.length,
+          total_tests_done: Array.isArray(latest.time_series) ? latest.time_series.length : 0,
           last_assessment_at:
             latest.timestamp || patientData.created_at || new Date().toISOString(),
           baseline_assessment_at:
@@ -223,9 +232,6 @@ export function DashboardScreen() {
   const data = dashboardData;
   const riskStyle = getRiskStyle(data?.risk_level || "inconclusive");
   const hasData = !!data;
-  const showSummaryCards = !!data?.has_clinical_summary;
-  const showBiomarkerBreakdown = !!data && data.explanation.length > 0;
-  const showResearchRefs = !!data && data.research_references_used.length > 0;
 
   const dashboardTranscript = useMemo(() => {
     if (!data) {
@@ -233,11 +239,11 @@ export function DashboardScreen() {
     }
     return [
       `Assessment dashboard for ${data.patient_name}.`,
-      showSummaryCards ? `Risk level is ${riskStyle.label.toLowerCase()}.` : "",
+      data.has_clinical_summary ? `Risk level is ${riskStyle.label.toLowerCase()}.` : "",
       data.conditions_flagged.length
         ? `Conditions flagged: ${data.conditions_flagged.map((c) => c.replace(/_/g, " ")).join(", ")}.`
         : "",
-      showSummaryCards ? `Confidence score is ${(data.confidence_score * 100).toFixed(0)} percent.` : "",
+      data.has_clinical_summary ? `Confidence score is ${(data.confidence_score * 100).toFixed(0)} percent.` : "",
       `${data.total_tests_done} tests completed. Last assessment ${new Date(data.last_assessment_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.`,
     ]
       .filter(Boolean)
@@ -376,8 +382,6 @@ export function DashboardScreen() {
           </motion.div>
         </div>
 
-        {/* Risk level + conditions + confidence */}
-        {showSummaryCards && (
         <div className="grid md:grid-cols-3 gap-4">
           <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -397,7 +401,7 @@ export function DashboardScreen() {
                 }}
               >
                 <span className="font-semibold capitalize" style={{ color: riskStyle.bg }}>
-                  {riskStyle.label}
+                  {data.has_clinical_summary ? riskStyle.label : "NO DATA"}
                 </span>
               </div>
             </Card>
@@ -421,7 +425,7 @@ export function DashboardScreen() {
                   >
                     {c.replace(/_/g, " ")}
                   </Badge>
-                )) : <span className="text-sm text-white/60">None</span>}
+                )) : <span className="text-sm text-white/60">NO DATA</span>}
               </div>
             </Card>
           </motion.div>
@@ -436,20 +440,18 @@ export function DashboardScreen() {
               </div>
               <div className="space-y-2">
                 <p className="text-2xl font-bold text-white">
-                  {(data.confidence_score * 100).toFixed(0)}%
+                  {data.has_clinical_summary ? `${(data.confidence_score * 100).toFixed(0)}%` : "NO DATA"}
                 </p>
                 <Progress
-                  value={data.confidence_score * 100}
+                  value={data.has_clinical_summary ? data.confidence_score * 100 : 0}
                   className="h-2 bg-white/10"
                 />
               </div>
             </Card>
           </motion.div>
         </div>
-        )}
 
         {/* Biomarker explanations */}
-        {showBiomarkerBreakdown && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -462,7 +464,16 @@ export function DashboardScreen() {
             </h2>
             <ScrollArea className="h-[280px] pr-4">
               <ul className="space-y-3">
-                {data.explanation.map((line, i) => {
+                {(data.explanation.length > 0 ? data.explanation : ["NO DATA"]).map((line, i) => {
+                  if (line === "NO DATA") {
+                    return (
+                      <li key={i}>
+                        <Card className="p-4 bg-white/5 border border-white/10 rounded-lg">
+                          <p className="text-sm text-white/60">NO DATA</p>
+                        </Card>
+                      </li>
+                    );
+                  }
                   const { metric, baseline, latest, description } = parseExplanationLine(line);
                   return (
                     <li key={i}>
@@ -487,10 +498,8 @@ export function DashboardScreen() {
             </ScrollArea>
           </Card>
         </motion.div>
-        )}
 
         {/* Research references */}
-        {showResearchRefs && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -502,7 +511,7 @@ export function DashboardScreen() {
               Research references used
             </h2>
             <ul className="space-y-2">
-              {data.research_references_used.map((ref, i) => (
+              {(data.research_references_used.length > 0 ? data.research_references_used : ["NO DATA"]).map((ref, i) => (
                 <li
                   key={i}
                   className="text-sm text-white/80 pl-4 border-l-2 border-white/20 py-1"
@@ -513,7 +522,6 @@ export function DashboardScreen() {
             </ul>
           </Card>
         </motion.div>
-        )}
           </>
         )}
       </div>

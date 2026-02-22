@@ -18,7 +18,7 @@ interface BaselineStatus {
 
 export function BaselineScreen() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, getCurrentPatientId } = useAuth();
 
   const [status, setStatus] = useState<BaselineStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,20 +27,30 @@ export function BaselineScreen() {
   const [resetError, setResetError] = useState("");
 
   useEffect(() => {
-    if (!user?.patientId) { setLoading(false); return; }
-    fetch(buildApiUrl(`/patients/${user.patientId}/baseline-status`))
+    const load = async () => {
+      const patientId = await getCurrentPatientId();
+      if (!patientId) {
+        setLoading(false);
+        return;
+      }
+
+      fetch(buildApiUrl(`/patients/${patientId}/baseline-status`))
       .then((r) => r.ok ? r.json() : null)
       .then((data) => { if (data) setStatus(data); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [user?.patientId]);
+    };
+
+    void load();
+  }, [user?.patientId, getCurrentPatientId]);
 
   const handleReset = async () => {
-    if (!user?.patientId) return;
+    const patientId = await getCurrentPatientId();
+    if (!patientId) return;
     setResetting(true);
     setResetError("");
     try {
-      const res = await fetch(buildApiUrl(`/patients/${user.patientId}/reset`), {
+      const res = await fetch(buildApiUrl(`/patients/${patientId}/reset`), {
         method: "DELETE",
       });
       if (!res.ok) {
