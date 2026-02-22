@@ -9,6 +9,44 @@ import { useAuth } from "../context/auth-context";
 import { buildApiUrl } from "../config/api";
 import { loadLatestGeminiSummary } from "../lib/gemini-analysis";
 
+/* ── Explanation line parser & trend badge ── */
+function parseExplanationLine(line: string) {
+  const parts = line.split(":");
+  if (parts.length < 4) return { metric: line, baseline: "", latest: "", description: line, delta: null, trend: "stable" as const };
+  const metric = parts[0].replace(/_/g, " ");
+  const baseline = parts[1].trim();
+  const latest = parts[2].trim();
+  const description = parts.slice(3).join(":").trim();
+
+  const baseNum = parseFloat(baseline);
+  const latestNum = parseFloat(latest);
+  let delta: number | null = null;
+  let trend: "up" | "down" | "stable" = "stable";
+  if (!isNaN(baseNum) && !isNaN(latestNum)) {
+    delta = latestNum - baseNum;
+    if (Math.abs(delta) < 0.0001) trend = "stable";
+    else trend = delta > 0 ? "up" : "down";
+  }
+  return { metric, baseline, latest, description, delta, trend };
+}
+
+function TrendBadge({ trend, delta }: { trend: "up" | "down" | "stable"; delta: number | null }) {
+  if (trend === "stable")
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-white/60">
+        ● Stable
+      </span>
+    );
+  const color = trend === "up" ? "text-amber-300 bg-amber-400/15" : "text-sky-300 bg-sky-400/15";
+  const arrow = trend === "up" ? "↑" : "↓";
+  const label = delta != null ? `${arrow} ${Math.abs(delta).toFixed(4)}` : arrow;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${color}`}>
+      {label}
+    </span>
+  );
+}
+
 type SessionRecord = {
   timestamp?: string;
   session_averages?: Record<string, number | null>;
@@ -298,14 +336,62 @@ export function ResultsScreen() {
         </div>
 
         {/* What This Means */}
-        <Card className="p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl">
-          <h2 className="text-lg font-semibold text-white mb-3">
+        <div className="space-y-4">
+          <h2 className="text-xl font-semibold text-white text-center">
             What This Means
           </h2>
-          <p className="text-sm text-white/80 leading-relaxed">
-            {primaryExplanation}
-          </p>
-        </Card>
+          <div className="grid gap-3">
+            {(Array.isArray(summary?.explanation) && summary.explanation.length > 0
+              ? summary.explanation
+              : [primaryExplanation]
+            ).map((line, i) => {
+              if (!line || !line.trim()) return null;
+              const { metric, baseline, latest, description, delta, trend } = parseExplanationLine(line);
+              return (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.08 }}
+                >
+                  <Card className="p-5 bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl hover:bg-white/10 transition-colors">
+                    <div className="space-y-2">
+                      {/* Metric name + trend badge */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold text-[#00d4ff] capitalize">
+                          {metric}
+                        </p>
+                        <TrendBadge trend={trend} delta={delta} />
+                      </div>
+                      {/* Baseline vs Latest values */}
+                      {(baseline || latest) && (
+                        <div className="flex items-center gap-4">
+                          {baseline && (
+                            <div>
+                              <span className="text-[10px] uppercase tracking-wider text-white/40">Baseline</span>
+                              <p className="text-sm font-medium text-white/70 tabular-nums">{baseline}</p>
+                            </div>
+                          )}
+                          {baseline && latest && (
+                            <span className="text-white/20 text-lg">→</span>
+                          )}
+                          {latest && (
+                            <div>
+                              <span className="text-[10px] uppercase tracking-wider text-white/40">Latest</span>
+                              <p className="text-sm font-medium text-white tabular-nums">{latest}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* Description */}
+                      <p className="text-xs leading-relaxed text-white/60">{description}</p>
+                    </div>
+                  </Card>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Action Buttons */}
         <div className="grid md:grid-cols-2 gap-3">

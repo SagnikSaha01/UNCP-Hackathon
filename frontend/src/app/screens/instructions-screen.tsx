@@ -1,6 +1,5 @@
 import { useNavigate, useSearchParams } from "react-router";
-import { ArrowRight, Volume2, Play, Pause, RotateCcw } from "lucide-react";
-import { useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { VoiceAssistantButton } from "../components/voice-assistant-button";
@@ -10,8 +9,6 @@ export function InstructionsScreen() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const mode = searchParams.get("mode") === "postop" ? "postop" : "baseline";
-  const [isPlaying, setIsPlaying] = useState(false);
-
   const transcript = `Step 1: Follow the dot. Please sit comfortably and keep your head still. A blue dot will flash from side to side—follow it with your eyes only. Then it will move smoothly left and right. Follow the dot with your eyes only, not your head. When you're ready, press Begin Test.`;
 
   return (
@@ -72,40 +69,7 @@ export function InstructionsScreen() {
               </div>
             </div>
 
-            {/* Voice Guidance Panel */}
-            <div className="bg-white/5 rounded-xl p-4 border border-white/5">
-              <div className="flex items-center gap-3 mb-3">
-                <Volume2 className="h-5 w-5 text-[#00d4ff]" />
-                <h3 className="text-sm font-semibold text-white">Voice Guidance</h3>
-              </div>
-              <div className="flex gap-2 mb-3">
-                <Button
-                  onClick={() => setIsPlaying(!isPlaying)}
-                  className="flex-1 bg-gradient-to-r from-[#00d4ff] to-[#7c3aed] hover:opacity-90 text-white h-10 text-sm rounded-xl"
-                >
-                  {isPlaying ? (
-                    <>
-                      <Pause className="h-4 w-4 mr-2" />
-                      Pause
-                    </>
-                  ) : (
-                    <>
-                      <Play className="h-4 w-4 mr-2" />
-                      Play
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  className="h-10 px-4 border border-white/10 bg-white/5 text-white hover:bg-white/10 rounded-xl"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                </Button>
-              </div>
-              <div className="text-xs text-white/60 leading-relaxed p-3 bg-[#0a0f1e] rounded-lg border border-white/5">
-                {transcript}
-              </div>
-            </div>
+
           </div>
         </Card>
 

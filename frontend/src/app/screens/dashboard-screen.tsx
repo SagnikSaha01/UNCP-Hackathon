@@ -26,12 +26,41 @@ import { loadLatestGeminiSummary } from "../lib/gemini-analysis";
 /** Parsed single explanation line: metric:baseline:latest:description */
 function parseExplanationLine(line: string) {
   const parts = line.split(":");
-  if (parts.length < 4) return { metric: line, baseline: "", latest: "", description: line };
+  if (parts.length < 4) return { metric: line, baseline: "", latest: "", description: line, delta: null, trend: "stable" as const };
   const metric = parts[0].replace(/_/g, " ");
-  const baseline = parts[1];
-  const latest = parts[2];
+  const baseline = parts[1].trim();
+  const latest = parts[2].trim();
   const description = parts.slice(3).join(":").trim();
-  return { metric, baseline, latest, description };
+
+  // Compute delta for indicator
+  const baseNum = parseFloat(baseline);
+  const latestNum = parseFloat(latest);
+  let delta: number | null = null;
+  let trend: "up" | "down" | "stable" = "stable";
+  if (!isNaN(baseNum) && !isNaN(latestNum)) {
+    delta = latestNum - baseNum;
+    if (Math.abs(delta) < 0.0001) trend = "stable";
+    else trend = delta > 0 ? "up" : "down";
+  }
+
+  return { metric, baseline, latest, description, delta, trend };
+}
+
+function TrendBadge({ trend, delta }: { trend: "up" | "down" | "stable"; delta: number | null }) {
+  if (trend === "stable")
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/10 text-white/60">
+        ● Stable
+      </span>
+    );
+  const color = trend === "up" ? "text-amber-300 bg-amber-400/15" : "text-sky-300 bg-sky-400/15";
+  const arrow = trend === "up" ? "↑" : "↓";
+  const label = delta != null ? `${arrow} ${Math.abs(delta).toFixed(4)}` : arrow;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${color}`}>
+      {label}
+    </span>
+  );
 }
 
 type DashboardData = {
@@ -474,21 +503,43 @@ export function DashboardScreen() {
                       </li>
                     );
                   }
-                  const { metric, baseline, latest, description } = parseExplanationLine(line);
+                  const { metric, baseline, latest, description, delta, trend } = parseExplanationLine(line);
                   return (
                     <li key={i}>
                       <Card className="p-4 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 transition-colors">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-[#00d4ff] capitalize">
-                              {metric}
-                            </p>
-                            <p className="text-xs text-white/50 mt-0.5">
-                              Baseline: {baseline} · Latest: {latest}
-                            </p>
-                            <p className="text-sm text-white/80 mt-1">{description}</p>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1 space-y-2">
+                            {/* Metric name + trend badge */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-semibold text-[#00d4ff] capitalize">
+                                {metric}
+                              </p>
+                              <TrendBadge trend={trend} delta={delta} />
+                            </div>
+                            {/* Baseline vs Latest values */}
+                            {(baseline || latest) && (
+                              <div className="flex items-center gap-4">
+                                {baseline && (
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-white/40">Baseline</span>
+                                    <p className="text-sm font-medium text-white/70 tabular-nums">{baseline}</p>
+                                  </div>
+                                )}
+                                {baseline && latest && (
+                                  <span className="text-white/20 text-lg">→</span>
+                                )}
+                                {latest && (
+                                  <div>
+                                    <span className="text-[10px] uppercase tracking-wider text-white/40">Latest</span>
+                                    <p className="text-sm font-medium text-white tabular-nums">{latest}</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {/* Description */}
+                            <p className="text-xs leading-relaxed text-white/60">{description}</p>
                           </div>
-                          <ChevronRight className="h-4 w-4 text-white/40 shrink-0 mt-0.5" />
+                          <ChevronRight className="h-4 w-4 text-white/30 shrink-0 mt-1" />
                         </div>
                       </Card>
                     </li>
