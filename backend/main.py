@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from services.auth_service import router as auth_router
 from services.eleven_labs_service import router as eleven_labs_router
 from services.gemini_service import router as gemini_router
 from services.mongodb_atlas_service import connect, disconnect, router as mongodb_router
@@ -15,6 +16,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AURA API", lifespan=lifespan)
 
+app.include_router(auth_router)
 app.include_router(eleven_labs_router)
 app.include_router(gemini_router)
 app.include_router(mongodb_router)

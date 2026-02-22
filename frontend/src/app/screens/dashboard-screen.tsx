@@ -10,6 +10,7 @@ import {
   ChevronRight,
   FileText,
   Play,
+  LogOut,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
@@ -17,6 +18,7 @@ import { Badge } from "../components/ui/badge";
 import { Progress } from "../components/ui/progress";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { VoiceAssistantButton } from "../components/voice-assistant-button";
+import { useAuth } from "../context/auth-context";
 import { motion } from "motion/react";
 
 /** Parsed single explanation line: metric:value:threshold:description */
@@ -69,10 +71,11 @@ function getRiskStyle(level: string) {
 export function DashboardScreen() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { logout, user } = useAuth();
   const nameFromUrl = searchParams.get("name");
   const data = {
     ...MOCK_DASHBOARD,
-    patient_name: nameFromUrl?.trim() || MOCK_DASHBOARD.patient_name,
+    patient_name: user?.name || nameFromUrl?.trim() || MOCK_DASHBOARD.patient_name,
   };
   const riskStyle = getRiskStyle(data.risk_level);
 
@@ -114,10 +117,11 @@ export function DashboardScreen() {
             </Button>
             <Button
               variant="outline"
-              className="border-white/10 bg-white/5 text-white hover:bg-white/10"
-              onClick={() => navigate("/")}
+              className="border-white/10 bg-white/5 text-white hover:bg-red-500/20 hover:border-red-500/40 hover:text-red-300"
+              onClick={() => { logout(); navigate("/"); }}
             >
-              Back to app
+              <LogOut className="mr-2 h-4 w-4" />
+              Log out
             </Button>
           </div>
         </div>
