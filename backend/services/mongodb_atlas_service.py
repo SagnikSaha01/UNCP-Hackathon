@@ -438,6 +438,52 @@ async def get_longitudinal_route(patient_id: str):
     return build_longitudinal_summary(sessions)
 
 
+@router.delete("/patients/{patient_id}/reset")
+async def reset_patient_baseline_route(patient_id: str):
+    """
+    Reset a patient's baseline and delete ALL their session data.
+    This is the only way to re-establish a baseline (e.g. for a new surgery/treatment).
+    After this call the patient document has baseline=null and no sessions exist,
+    so the next completed session will become the new permanent baseline.
+    """
+    patient = await _patients().find_one({"patient_id": patient_id})
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    # Delete all sessions for this patient
+    delete_result = await _sessions().delete_many({"patient_id": patient_id})
+
+    # Reset baseline to null on the patient document
+    await _patients().update_one(
+        {"patient_id": patient_id},
+        {"$set": {"baseline": None, "baseline_reset_at": _now_iso()}},
+    )
+
+    return {
+        "ok": True,
+        "sessions_deleted": delete_result.deleted_count,
+        "message": "Baseline and all session data have been reset. The next completed session will become the new baseline.",
+    }
+
+
+@router.get("/patients/{patient_id}/baseline-status")
+async def get_baseline_status_route(patient_id: str):
+    """Return whether a patient has a baseline recorded and how many sessions they have."""
+    patient = await _patients().find_one({"patient_id": patient_id})
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    session_count = await _sessions().count_documents(
+        {"patient_id": patient_id, "completed": True}
+    )
+
+    return {
+        "has_baseline": patient.get("baseline") is not None,
+        "session_count": session_count,
+        "baseline_reset_at": patient.get("baseline_reset_at"),
+    }
+
+
 @router.get("/fetch-input/{patient_id}")
 async def get_analyze_input_route(patient_id: str):
     """Return payload formatted for direct POST to /analyze.
